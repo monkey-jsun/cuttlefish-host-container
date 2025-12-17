@@ -48,8 +48,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # ---- Runtime layout ----
 WORKDIR /cf
-ENV HOME=/cf
-ENV CVD_HOME=/cf/instance
 
 # ---- Entrypoint ----
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
