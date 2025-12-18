@@ -15,6 +15,14 @@ Simple container that runs 1 cuttlefish instance inside on my x86_64 linux host.
 4. riscv64 guest via qemu
 
 ## Usage
+3 steps to use the container:
+1. build the docker image with "docker build ..."(once)
+2. create or update the cvd instance with "cf-init.sh ..." (infrequently, as needed)
+    1. populate/update instance with aosp img zip and/or cvd host package
+3. run the cvd instance with "cf-run.sh" (frequently)
+
+Below are example execution sequence.
+
 ```
 docker build . -t cf-host
 
@@ -41,7 +49,7 @@ m dist
 Additional notes:
 * run "cf-init.sh -h" and "cf-run.sh -h" for more info
 * to create multiple containers/instances, create multiple directories.  For example, "mkdir riscv; cd riscv; ../cf-init.sh ....; ../cf-run.sh".
-  * However, you can only run 1 of them currently due to port conflict.
+  * However, you can only run 1 of them at any time due to port conflict.
 * ADB, VNC ports are visiable to host LAN.  So you can run it on a headless server.
 
 ## TODO

@@ -91,7 +91,6 @@ if printf '%s\n' "${FORWARD_ARGS[@]}" | grep -qF -- "CF_VM_MANAGER=crosvm"; then
   echo "[cf-run] Running crosvm, secure args are: $SECURE_ARGS"
 else
    SECURE_ARGS=" 
-  --device /dev/kvm 
   --device /dev/net/tun 
   --device /dev/vhost-vsock 
   --device /dev/dri 
