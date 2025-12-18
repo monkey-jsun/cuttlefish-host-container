@@ -21,7 +21,7 @@ Simple container that runs 1 cuttlefish instance inside on my x86_64 linux host.
     1. populate/update instance with aosp img zip and/or cvd host package
 3. run the cvd instance with "cf-run.sh" (frequently)
 
-Below are example execution sequence.
+Below is a sample execution sequence.
 
 ```
 docker build . -t cf-host
@@ -54,3 +54,8 @@ Additional notes:
 
 ## TODO
 * GPU acceleration does not work yet
+
+---
+![Screenshot 2025-12-17 204158](https://github.com/user-attachments/assets/dff3fb6a-461b-440c-a323-85a6d6f9ad81)
+
+
