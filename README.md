@@ -20,6 +20,7 @@ Simple container that runs 1 cuttlefish instance inside on my x86_64 linux host.
 2. create or update the cvd instance with "cf-init.sh ..." (infrequently, as needed)
     1. populate/update instance with aosp img zip and/or cvd host package
 3. run the cvd instance with "cf-run.sh" (frequently)
+    1. connect to the instance via adb, vnc or webrtc
 
 Below is a sample execution sequence.
 
@@ -35,6 +36,9 @@ gvncviewer localhost
 # or run with crosvm, much faster
 ./cf-run.sh -- -e CF_VM_MANAGER=crosvm -e CF_START_WEBRTC=true
 firefox https://localhost:8443
+
+# connect via adb
+adb connect localhost:6520
 ```
 
 You can find product img zip file and cvd host package from [Google aosp build artifacts site](https://ci.android.com/builds/branches/aosp-android-latest-release/grid?legacy=1).
