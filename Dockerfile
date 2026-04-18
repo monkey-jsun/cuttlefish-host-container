@@ -1,4 +1,4 @@
-# Cuttlefish host container using launch_cvd
+# Cuttlefish host container for RISC-V host
 FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -18,17 +18,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     socat \
     && rm -rf /var/lib/apt/lists/*
 
-# --- Add official Cuttlefish apt repo, install cuttlefish-base/user ---
-RUN curl -fsSL https://us-apt.pkg.dev/doc/repo-signing-key.gpg \
-      -o /etc/apt/trusted.gpg.d/artifact-registry.asc \
-    && chmod a+r /etc/apt/trusted.gpg.d/artifact-registry.asc \
-    && echo "deb https://us-apt.pkg.dev/projects/android-cuttlefish-artifacts android-cuttlefish main" \
-       > /etc/apt/sources.list.d/android-cuttlefish.list \
-    && apt-get update && apt-get install -y --no-install-recommends \
-         cuttlefish-base \
-         cuttlefish-user \
-    && rm -rf /var/lib/apt/lists/*
-
 # ---- install qemu dependencies ----
 RUN apt-get update && apt-get install -y --no-install-recommends \
     qemu-system \
@@ -37,13 +26,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgbm1 \
     && rm -rf /var/lib/apt/lists/*
 
-# ---- install gpu accel related ---- 
+# ---- install gpu accel related ----
 # TODO: not working yet ...
 RUN apt-get update && apt-get install -y --no-install-recommends \
     mesa-utils \
     mesa-vulkan-drivers \
     libgl1-mesa-dri \
     libegl1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# --- Install cuttlefish-base deb from GitHub release ---
+ARG CF_VERSION=1.50.0
+ARG CF_TAG=v${CF_VERSION}-riscv64-260414
+RUN curl -fsSL -o /tmp/cuttlefish-base.deb \
+      https://github.com/monkey-jsun/android-cuttlefish/releases/download/${CF_TAG}/cuttlefish-base_${CF_VERSION}_riscv64.deb \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends /tmp/cuttlefish-base.deb \
+    && rm -f /tmp/cuttlefish-base.deb \
     && rm -rf /var/lib/apt/lists/*
 
 # ---- Runtime layout ----
