@@ -79,11 +79,9 @@ else
   echo "[cf-run] No extra launch_cvd args (using defaults from entrypoint.sh)."
 fi
 
-# this is a little hackish right now. 
-# for crosvm running (which is for x86 only), we have to relax a bunch of restrictions
-# otherwise we go with more safter choices.
-# Note we assume default vm_manager is qemu_cli, not crosvm
-if printf '%s\n' "${FORWARD_ARGS[@]}" | grep -qF -- "CF_VM_MANAGER=crosvm"; then
+# crosvm requires privileged mode; qemu_cli can run with more restricted permissions.
+# Default vm_manager is crosvm on riscv64.
+if ! printf '%s\n' "${FORWARD_ARGS[@]}" | grep -qF -- "CF_VM_MANAGER=qemu_cli"; then
   SECURE_ARGS="
   --privileged 
   --network host 
