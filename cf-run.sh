@@ -99,11 +99,26 @@ else
   echo "[cf-run] Running qemu_cli, secure args are: $SECURE_ARGS"
 fi
 
+# Split FORWARD_ARGS: -e pairs go to docker, everything else to launch_cvd
+DOCKER_ARGS=()
+LAUNCH_ARGS=()
+i=0
+while [[ $i -lt ${#FORWARD_ARGS[@]} ]]; do
+  if [[ "${FORWARD_ARGS[$i]}" == "-e" ]] && [[ $((i+1)) -lt ${#FORWARD_ARGS[@]} ]]; then
+    DOCKER_ARGS+=("-e" "${FORWARD_ARGS[$((i+1))]}")
+    i=$((i+2))
+  else
+    LAUNCH_ARGS+=("${FORWARD_ARGS[$i]}")
+    i=$((i+1))
+  fi
+done
+
 # run
 docker run -it --rm \
   $SECURE_ARGS \
   -p 5900:5900 \
   -p 6520:6520 \
   -v "$CF_ROOT_HOST:/cf" \
-  "${FORWARD_ARGS[@]}" \
-  "$IMAGE_NAME"
+  ${DOCKER_ARGS[@]+"${DOCKER_ARGS[@]}"} \
+  "$IMAGE_NAME" \
+  ${LAUNCH_ARGS[@]+"${LAUNCH_ARGS[@]}"}
