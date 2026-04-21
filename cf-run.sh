@@ -67,6 +67,14 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# Check for already running cf container
+EXISTING=$(docker ps -q --filter ancestor="$IMAGE_NAME")
+if [[ -n "$EXISTING" ]]; then
+  echo "[cf-run] ERROR: A cf container is already running (container $EXISTING)." >&2
+  echo "[cf-run]        Stop it first with ./cf-stop.sh or: docker kill $EXISTING" >&2
+  exit 1
+fi
+
 mkdir -p "$CF_ROOT_HOST"
 CF_ROOT_HOST=$(readlink -f $CF_ROOT_HOST)
 
