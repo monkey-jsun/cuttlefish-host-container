@@ -37,7 +37,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # --- Install cuttlefish-base deb from GitHub release ---
 ARG CF_VERSION=1.50.0
-ARG CF_TAG=v${CF_VERSION}-riscv64-260414
+ARG CF_TAG=v${CF_VERSION}-riscv64-260506
 RUN curl -fsSL -o /tmp/cuttlefish-base.deb \
       https://github.com/monkey-jsun/android-cuttlefish/releases/download/${CF_TAG}/cuttlefish-base_${CF_VERSION}_riscv64.deb \
     && apt-get update \
