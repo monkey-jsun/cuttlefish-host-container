@@ -44,6 +44,18 @@ export ANDROID_PRODUCT_OUT="$CF_PRODUCT_DIR"
 export CVD_HOME="$CF_INSTANCE_DIR"
 export HOME="$CF_HOST_DIR"
 
+# Cuttlefish host network resources: cvd-ebr/cvd-wbr bridges, 10 taps each
+# (cvd-{m,e,w}tap-NN), dnsmasq for guest DHCP, iptables MASQUERADE for NAT.
+# Without this, qemu/crosvm create taps on demand with no master + no IP, so
+# the guest has no DHCP / no NAT (crosvm also logs EIO ~132x during boot).
+# ADB still works via vsock either way; this gives a clean boot log and real
+# guest IP connectivity. `stop` first because the init script is not
+# idempotent and bridges persist across runs in --network=host mode.
+if [ -x /etc/init.d/cuttlefish-host-resources ]; then
+    /etc/init.d/cuttlefish-host-resources stop  >/dev/null 2>&1 || true
+    /etc/init.d/cuttlefish-host-resources start || true
+fi
+
 # VNC bridge: container 0.0.0.0:5900 -> container 127.0.0.1:6444 (Cuttlefish VNC)
 socat TCP-LISTEN:5900,bind=0.0.0.0,reuseaddr,fork TCP:127.0.0.1:6444 &
 
