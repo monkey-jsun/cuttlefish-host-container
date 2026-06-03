@@ -3,6 +3,29 @@ set -euo pipefail
 
 IMAGE_NAME="cf-host"
 
+usage() {
+  cat <<EOF
+Usage: $(basename "$0") [options] [stop_cvd args...]
+
+Stop the cuttlefish device running inside the cf-host container.
+
+Options:
+  -i, --image NAME      Docker image name to find the container (default: $IMAGE_NAME)
+  -h, --help            Show this help
+
+All remaining arguments are passed to stop_cvd inside the container.
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -i|--image)  IMAGE_NAME="$2"; shift 2 ;;
+    -h|--help)   usage; exit 0 ;;
+    --)          shift; break ;;
+    *)           break ;;
+  esac
+done
+
 CONTAINER_ID=$(docker ps -q --filter ancestor="$IMAGE_NAME")
 
 if [[ -z "$CONTAINER_ID" ]]; then
