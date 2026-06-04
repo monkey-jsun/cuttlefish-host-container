@@ -6,8 +6,16 @@ set -euo pipefail
 : "${CF_CPUS:=4}"
 : "${CF_MEM_MB:=8192}"
 : "${CF_GPU_MODE:=auto}"
-: "${CF_VM_MANAGER:=qemu_cli}"    # Force QEMU backend
-: "${CF_START_WEBRTC:=false}"    # Force QEMU backend
+: "${CF_VM_MANAGER:=qemu_cli}"
+
+# CF_START_WEBRTC is derived from CF_VM_MANAGER. The source enforces the
+# pairing (crosvm with WebRTC, qemu_cli with VNC); other combinations are
+# non-functional.
+if [[ "$CF_VM_MANAGER" == "crosvm" ]]; then
+  CF_START_WEBRTC=true
+else
+  CF_START_WEBRTC=false
+fi
 
 CF_ROOT=/cf
 CF_HOST_DIR="$CF_ROOT/host"

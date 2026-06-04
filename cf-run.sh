@@ -12,6 +12,7 @@ CF_ROOT_HOST="cf-data"
 # ============================================================================
 main() {
   parse_args "$@"
+  check_vm_manager
 
   mkdir -p "$CF_ROOT_HOST"
   CF_ROOT_HOST=$(readlink -f $CF_ROOT_HOST)
@@ -25,10 +26,8 @@ main() {
     echo "[cf-run] No extra launch_cvd args (using defaults from entrypoint.sh)."
   fi
 
-  # this is a little hackish right now.
-  # for crosvm running (which is for x86 only), we have to relax a bunch of restrictions
+  # for crosvm running, we have to relax a bunch of restrictions
   # otherwise we go with more safter choices.
-  # Note we assume default vm_manager is qemu_cli, not crosvm
   local SECURE_ARGS
   if printf '%s\n' "${FORWARD_ARGS[@]}" | grep -qF -- "CF_VM_MANAGER=crosvm"; then
     SECURE_ARGS="
@@ -77,6 +76,8 @@ Options:
       --gpu-mode MODE   auto|guest_swiftshader|drm_virgl|gfxstream
                         (default: auto)
       --vm-manager MGR  crosvm|qemu_cli
+                        (default: crosvm for same host/guest arches, 
+                                  qemu_cli otherwise)
   -r, --root DIR        Host directory to mount as /cf in the container
                         (default: $CF_ROOT_HOST)
   -i, --image NAME      Docker image name (default: $IMAGE_NAME)
@@ -99,7 +100,7 @@ Examples:
 EOF
 }
 
-# Parse cf-run.sh's own options; everything after first non-option or '--'
+# Parse cf-run.sh's own options; everything after '--'
 # goes to launch_cvd. Sets globals FORWARD_ARGS, IMAGE_NAME, CF_ROOT_HOST.
 # Uses `exit` (not `return`) on errors -- kills the whole script.
 parse_args() {
@@ -109,15 +110,7 @@ parse_args() {
       --cpus)        FORWARD_ARGS+=(-e "CF_CPUS=$2"); shift 2 ;;
       --mem-mb)      FORWARD_ARGS+=(-e "CF_MEM_MB=$2"); shift 2 ;;
       --gpu-mode)    FORWARD_ARGS+=(-e "CF_GPU_MODE=$2"); shift 2 ;;
-      --vm-manager)
-        FORWARD_ARGS+=(-e "CF_VM_MANAGER=$2")
-        if [[ "$2" == "crosvm" ]]; then
-          FORWARD_ARGS+=(-e "CF_START_WEBRTC=true")
-        else
-          FORWARD_ARGS+=(-e "CF_START_WEBRTC=false")
-        fi
-        shift 2
-        ;;
+      --vm-manager)  FORWARD_ARGS+=(-e "CF_VM_MANAGER=$2"); shift 2 ;;
       -r|--root)     CF_ROOT_HOST="$2"; shift 2 ;;
       -i|--image)    IMAGE_NAME="$2"; shift 2 ;;
       -h|--help)     usage; exit 0 ;;
@@ -126,6 +119,58 @@ parse_args() {
       *)             echo "Unknown option: $1" >&2; usage; exit 1 ;;
     esac
   done
+}
+
+# If CF_VM_MANAGER is not already in FORWARD_ARGS (set by --vm-manager)
+# auto-detect based on host vs guest arch and inject:
+#  - if host and guest are same arch, use "crosvm";
+#  - Otherwise use "qemu_cli"
+check_vm_manager() {
+  if printf '%s\n' "${FORWARD_ARGS[@]}" | grep -qE -- '^CF_VM_MANAGER='; then
+    return
+  fi
+
+  local detected="qemu_cli"
+  if [[ "$(detect_host_arch)" == "$(detect_guest_arch)" ]]; then
+      detected="crosvm"
+  fi
+
+  echo "[cf-run] CF_VM_MANAGER : $detected (auto-detected)"
+  FORWARD_ARGS+=(-e "CF_VM_MANAGER=$detected")
+}
+
+# Echo normalized host arch (x86_64 / aarch64 / riscv64 / ...).
+detect_host_arch() {
+  local arch
+  arch=$(uname -m)
+  case "$arch" in
+    arm64) echo "aarch64" ;;
+    amd64) echo "x86_64" ;;
+    *)     echo "$arch" ;;
+  esac
+}
+
+# Detect and echo guest arch from $CF_ROOT_HOST/product/boot.img.
+# - Echoes "x86_64", "aarch64", or "riscv64" on success.
+# - Returns 1 on errors 
+detect_guest_arch() {
+  local bootimg="$CF_ROOT_HOST/product/boot.img"
+  [[ -f "$bootimg" ]] || return 1
+  command -v file >/dev/null 2>&1 || return 1
+  # Android boot.img v3+: kernel_size at offset 8 (u32 LE), kernel at PAGE_SIZE (4096)
+  local ksize tmp info
+  ksize=$(od -An -tu4 -N4 -j8 --endian=little "$bootimg" 2>/dev/null | tr -d ' ')
+  [[ -n "$ksize" && "$ksize" -gt 0 && "$ksize" -lt 1000000000 ]] || return 1
+  tmp=$(mktemp /tmp/cf-kernel.XXXXXX)
+  dd if="$bootimg" of="$tmp" bs=4096 skip=1 count=$((ksize / 4096 + 2)) status=none 2>/dev/null
+  info=$(file -L "$tmp" 2>/dev/null)
+  rm -f "$tmp"
+  case "$info" in
+    *"x86 boot"*|*x86-64*|*x86_64*) echo "x86_64" ;;
+    *aarch64*|*ARM64*)              echo "aarch64" ;;
+    *RISC-V*|*riscv64*)             echo "riscv64" ;;
+    *)                              return 1 ;;
+  esac
 }
 
 # ============================================================================
