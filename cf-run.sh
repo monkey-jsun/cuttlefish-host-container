@@ -98,6 +98,9 @@ else
   --cap-add NET_RAW 
   --security-opt seccomp=unconfined 
   --security-opt no-new-privileges"
+  if [[ -e /dev/kvm ]]; then
+    SECURE_ARGS+=" --device /dev/kvm"
+  fi
   echo "[cf-run] Running qemu_cli, secure args are: $SECURE_ARGS"
 fi
 
