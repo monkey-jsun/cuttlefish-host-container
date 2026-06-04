@@ -34,11 +34,21 @@ if [[ -z "$CONTAINER_ID" ]]; then
 fi
 
 echo "[cf-stop] Stopping CVD in container $CONTAINER_ID ..."
+# Try graceful in-guest shutdown via stop_cvd. May fail (e.g. launcher
+# monitor unresponsive); don't trip set -e here.
 docker exec "$CONTAINER_ID" env \
   HOME=/cf/host \
   ANDROID_HOST_OUT=/cf/host \
   ANDROID_PRODUCT_OUT=/cf/product \
   CVD_HOME=/cf/instance \
   PATH=/cf/host/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-  /cf/host/bin/stop_cvd "$@"
+  /cf/host/bin/stop_cvd "$@" || \
+    echo "[cf-stop] stop_cvd failed or timed out; will force-stop the container."
+
+# stop_cvd succeeded != container exited. launch_cvd (PID 1) may still be
+# wedged. Ensure the container actually stops.
+if docker ps -q --filter id="$CONTAINER_ID" | grep -q .; then
+  echo "[cf-stop] Forcing container $CONTAINER_ID to stop..."
+  docker stop -t 5 "$CONTAINER_ID" >/dev/null
+fi
 echo "[cf-stop] Done."
