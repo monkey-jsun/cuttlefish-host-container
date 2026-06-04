@@ -11,7 +11,13 @@ Usage: $(basename "$0") [options] [launch_cvd flags...]
 Run the Cuttlefish container using existing /cf/host and /cf/product.
 
 Options:
-  -r, --root DIR        Host directory to mount as /cf in the container (default: $CF_ROOT_HOST)
+      --cpus N          Guest vCPUs (default: 4)
+      --mem-mb N        Guest RAM in MB (default: 8192, 8GB)
+      --gpu-mode MODE   auto|guest_swiftshader|drm_virgl|gfxstream
+                        (default: auto)
+      --vm-manager MGR  crosvm|qemu_cli
+  -r, --root DIR        Host directory to mount as /cf in the container 
+                        (default: $CF_ROOT_HOST)
   -i, --image NAME      Docker image name (default: $IMAGE_NAME)
   -h, --help            Show this help
 
@@ -24,11 +30,11 @@ Examples:
   # Use a different host root and image
   $(basename "$0") -r /mnt/cf -i my-cf-image
 
-  # Pass extra launch_cvd flags. See entrypoint.sh for tunable vars.
-  $(basename "$0") -- -e CF_CPUS=4 -e CF_MEMORY_MB=8192 -e CF_GPU_MODE=none
+  # Common tunables 
+  $(basename "$0") --cpus 8 --mem-mb 16384
 
-  # run x86_64 with faster crosvm and webrtc
-  $(basename "$0") -- -e CF_VM_MANAGER=crosvm -e CF_START_WEBRTC=true
+  # run with crosvm (auto-implies WebRTC)
+  $(basename "$0") --vm-manager crosvm
 EOF
 }
 
@@ -36,6 +42,18 @@ EOF
 FORWARD_ARGS=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --cpus)        FORWARD_ARGS+=(-e "CF_CPUS=$2"); shift 2 ;;
+    --mem-mb)      FORWARD_ARGS+=(-e "CF_MEM_MB=$2"); shift 2 ;;
+    --gpu-mode)    FORWARD_ARGS+=(-e "CF_GPU_MODE=$2"); shift 2 ;;
+    --vm-manager)
+      FORWARD_ARGS+=(-e "CF_VM_MANAGER=$2")
+      if [[ "$2" == "crosvm" ]]; then
+        FORWARD_ARGS+=(-e "CF_START_WEBRTC=true")
+      else
+        FORWARD_ARGS+=(-e "CF_START_WEBRTC=false")
+      fi
+      shift 2
+      ;;
     -r|--root)
       CF_ROOT_HOST="$2"
       shift 2
