@@ -47,6 +47,7 @@ docker exec "$CONTAINER_ID" env \
 
 # stop_cvd succeeded != container exited. launch_cvd (PID 1) may still be
 # wedged. Ensure the container actually stops.
+sleep 3
 if docker ps -q --filter id="$CONTAINER_ID" | grep -q .; then
   echo "[cf-stop] Forcing container $CONTAINER_ID to stop..."
   docker stop -t 5 "$CONTAINER_ID" >/dev/null

@@ -20,8 +20,16 @@ main() {
   echo "[cf-run] Host root : $CF_ROOT_HOST"
   echo "[cf-run] Image     : $IMAGE_NAME"
   if [[ ${#FORWARD_ARGS[@]} -gt 0 ]]; then
-    echo "[cf-run] Extra launch_cvd args:"
+    echo "[cf-run] Container env:"
     printf '  %q\n' "${FORWARD_ARGS[@]}"
+  fi
+  if [[ ${#DOCKER_ARGS[@]} -gt 0 ]]; then
+    echo "[cf-run] Extra docker args:"
+    printf '  %q\n' "${DOCKER_ARGS[@]}"
+  fi
+  if [[ ${#LAUNCH_CVD_ARGS[@]} -gt 0 ]]; then
+    echo "[cf-run] Extra launch_cvd args:"
+    printf '  %q\n' "${LAUNCH_CVD_ARGS[@]}"
   else
     echo "[cf-run] No extra launch_cvd args (using defaults from entrypoint.sh)."
   fi
@@ -57,7 +65,9 @@ main() {
     -p 6520:6520 \
     -v "$CF_ROOT_HOST:/cf" \
     "${FORWARD_ARGS[@]}" \
-    "$IMAGE_NAME"
+    "${DOCKER_ARGS[@]}" \
+    "$IMAGE_NAME" \
+    "${LAUNCH_CVD_ARGS[@]}"
 }
 
 # ============================================================================
@@ -81,9 +91,10 @@ Options:
   -r, --root DIR        Host directory to mount as /cf in the container
                         (default: $CF_ROOT_HOST)
   -i, --image NAME      Docker image name (default: $IMAGE_NAME)
+      --docker-arg ARG  Append ARG to 'docker run'.  Repeatable.
   -h, --help            Show this help
 
-All remaining arguments are passed directly to launch_cvd inside the container.
+All arguments after '--' are passed directly to launch_cvd inside the container.
 
 Examples:
   # Use defaults, no extra launch_cvd flags
@@ -92,30 +103,42 @@ Examples:
   # Use a different host root and image
   $(basename "$0") -r /mnt/cf -i my-cf-image
 
-  # Common tunables
+  # Common tunables for cf instance
   $(basename "$0") --cpus 8 --mem-mb 16384
 
   # run with crosvm (auto-implies WebRTC)
   $(basename "$0") --vm-manager crosvm
+
+  # Advanced: pin container to specific host CPUs and cap host memory
+  $(basename "$0") \\
+      --docker-arg --cpuset-cpus=1,2,3,4 \\
+      --docker-arg --memory=8g
+
+  # Pass extra flags through to launch_cvd (e.g. force a clean boot)
+  $(basename "$0") -- --noresume
 EOF
 }
 
-# Parse cf-run.sh's own options; everything after '--'
-# goes to launch_cvd. Sets globals FORWARD_ARGS, IMAGE_NAME, CF_ROOT_HOST.
+# Parse cf-run.sh's own options; everything after '--' goes to launch_cvd
+# (via container CMD). Sets globals FORWARD_ARGS, LAUNCH_CVD_ARGS,
+# IMAGE_NAME, CF_ROOT_HOST.
 # Uses `exit` (not `return`) on errors -- kills the whole script.
 parse_args() {
   FORWARD_ARGS=()
+  LAUNCH_CVD_ARGS=()
+  DOCKER_ARGS=()
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --cpus)        FORWARD_ARGS+=(-e "CF_CPUS=$2"); shift 2 ;;
-      --mem-mb)      FORWARD_ARGS+=(-e "CF_MEM_MB=$2"); shift 2 ;;
-      --gpu-mode)    FORWARD_ARGS+=(-e "CF_GPU_MODE=$2"); shift 2 ;;
-      --vm-manager)  FORWARD_ARGS+=(-e "CF_VM_MANAGER=$2"); shift 2 ;;
+      --cpus)        FORWARD_ARGS+=(--env="CF_CPUS=$2"); shift 2 ;;
+      --mem-mb)      FORWARD_ARGS+=(--env="CF_MEM_MB=$2"); shift 2 ;;
+      --gpu-mode)    FORWARD_ARGS+=(--env="CF_GPU_MODE=$2"); shift 2 ;;
+      --vm-manager)  FORWARD_ARGS+=(--env="CF_VM_MANAGER=$2"); shift 2 ;;
       -r|--root)     CF_ROOT_HOST="$2"; shift 2 ;;
       -i|--image)    IMAGE_NAME="$2"; shift 2 ;;
+      --docker-arg)  DOCKER_ARGS+=("$2"); shift 2 ;;
       -h|--help)     usage; exit 0 ;;
-      # Everything after '--' goes straight to docker
-      --)            shift; FORWARD_ARGS+=("$@"); break ;;
+      # Everything after '--' goes to launch_cvd (container CMD).
+      --)            shift; LAUNCH_CVD_ARGS+=("$@"); break ;;
       *)             echo "Unknown option: $1" >&2; usage; exit 1 ;;
     esac
   done
@@ -136,7 +159,7 @@ check_vm_manager() {
   fi
 
   echo "[cf-run] CF_VM_MANAGER : $detected (auto-detected)"
-  FORWARD_ARGS+=(-e "CF_VM_MANAGER=$detected")
+  FORWARD_ARGS+=(--env="CF_VM_MANAGER=$detected")
 }
 
 # Echo normalized host arch (x86_64 / aarch64 / riscv64 / ...).
