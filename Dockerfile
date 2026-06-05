@@ -16,6 +16,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     net-tools \
     dnsmasq-base \
     socat \
+    python3 \
+    python3-aiohttp \
+    openssl \
     && rm -rf /var/lib/apt/lists/*
 
 # --- Add official Cuttlefish apt repo, install cuttlefish-base/user ---
@@ -51,8 +54,9 @@ WORKDIR /cf
 
 # ---- Entrypoint ----
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh
+COPY webrtc_operator_shim.py /usr/local/bin/webrtc_operator_shim.py
+RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/webrtc_operator_shim.py
 
-# VNC (instance 1) + ADB TCP (instance 1)
-EXPOSE 5900 6520
+# WebRTC signaling (instance 1) + VNC (instance 1) + ADB TCP (instance 1)
+EXPOSE 8443 5900 6520
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

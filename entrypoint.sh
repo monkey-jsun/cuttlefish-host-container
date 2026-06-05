@@ -58,6 +58,31 @@ if [[ -x /etc/init.d/cuttlefish-host-resources ]]; then
   /etc/init.d/cuttlefish-host-resources start || true
 fi
 
+# Start the in-container operator shim. Takes over webrtc_operator's role:
+# serves the browser-side HTTPS+WebSocket on 8443, bridges to the webRTC
+# binary via /register_device, and signals ice_servers to both sides.
+# Default ice_servers preserves the same STUN config webrtc_operator's
+# client.html shipped, so remote browsers continue to hole-punch.
+SIG_SERVER_FLAGS=()
+if [[ "$CF_VM_MANAGER" == "crosvm" ]]; then
+  CF_ICE_SERVERS_DEFAULT='[{"urls":["stun:stun.l.google.com:19302"]}]'
+  : "${CF_ICE_SERVERS_JSON:=$CF_ICE_SERVERS_DEFAULT}"
+  export CF_ICE_SERVERS_JSON
+  /usr/local/bin/webrtc_operator_shim.py \
+    --client-dir "$CF_HOST_DIR/usr/share/webrtc/assets" \
+    --cert-dir   "$CF_HOST_DIR/usr/share/webrtc/certs" \
+    --listen-port 8443 \
+    &
+  SIG_SERVER_FLAGS=(
+    --start_webrtc_sig_server=false
+    --webrtc_sig_server_addr=127.0.0.1
+    --webrtc_sig_server_port=8443
+    --webrtc_sig_server_path=/register_device
+    --webrtc_sig_server_secure=true
+    --verify_sig_server_certificate=false
+  )
+fi
+
 # VNC bridge: container 0.0.0.0:5900 -> container 127.0.0.1:6444 (Cuttlefish VNC)
 socat TCP-LISTEN:5900,bind=0.0.0.0,reuseaddr,fork TCP:127.0.0.1:6444 &
 
@@ -83,6 +108,7 @@ exec launch_cvd \
   --vm_manager="$CF_VM_MANAGER" \
   --start_webrtc=$CF_START_WEBRTC \
   --report_anonymous_usage_stats=y \
+  "${SIG_SERVER_FLAGS[@]}" \
   "$@" \
   || tail -f /dev/null
   # run forever even on error, for debugging
