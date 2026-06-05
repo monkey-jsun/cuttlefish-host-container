@@ -32,7 +32,6 @@ main() {
   if printf '%s\n' "${FORWARD_ARGS[@]}" | grep -qF -- "CF_VM_MANAGER=crosvm"; then
     SECURE_ARGS="
   --privileged
-  --network host
   --ulimit nofile=65536:65536"
     echo "[cf-run] Running crosvm, secure args are: $SECURE_ARGS"
   else
@@ -53,6 +52,7 @@ main() {
   # run
   docker run -it --rm \
     $SECURE_ARGS \
+    -p 8443:8443 \
     -p 5900:5900 \
     -p 6520:6520 \
     -v "$CF_ROOT_HOST:/cf" \

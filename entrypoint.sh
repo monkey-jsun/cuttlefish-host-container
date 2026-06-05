@@ -52,6 +52,12 @@ export ANDROID_PRODUCT_OUT="$CF_PRODUCT_DIR"
 export CVD_HOME="$CF_INSTANCE_DIR"
 export HOME="$CF_HOST_DIR"
 
+# Initialize cvd-* bridges inside this container's netns. Needed when the
+# container runs without --network host. Idempotent.
+if [[ -x /etc/init.d/cuttlefish-host-resources ]]; then
+  /etc/init.d/cuttlefish-host-resources start || true
+fi
+
 # VNC bridge: container 0.0.0.0:5900 -> container 127.0.0.1:6444 (Cuttlefish VNC)
 socat TCP-LISTEN:5900,bind=0.0.0.0,reuseaddr,fork TCP:127.0.0.1:6444 &
 
