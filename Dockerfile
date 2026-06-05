@@ -21,15 +21,29 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     openssl \
     && rm -rf /var/lib/apt/lists/*
 
-# --- Add official Cuttlefish apt repo, install cuttlefish-base/user ---
-RUN curl -fsSL https://us-apt.pkg.dev/doc/repo-signing-key.gpg \
-      -o /etc/apt/trusted.gpg.d/artifact-registry.asc \
-    && chmod a+r /etc/apt/trusted.gpg.d/artifact-registry.asc \
-    && echo "deb https://us-apt.pkg.dev/projects/android-cuttlefish-artifacts android-cuttlefish main" \
-       > /etc/apt/sources.list.d/android-cuttlefish.list \
-    && apt-get update && apt-get install -y --no-install-recommends \
-         cuttlefish-base \
-         cuttlefish-user \
+# --- Install cuttlefish-base (and cuttlefish-user on apt path).
+# Default for amd64/arm64 is the official apt repo. riscv64 has no upstream
+# apt repo; it pulls a pinned .deb from the fork's GitHub releases instead.
+ARG CF_VERSION=1.53.0
+ARG CF_RISCV64_VERSION=1.50.0
+ARG CF_RISCV64_TAG=v${CF_RISCV64_VERSION}-riscv64-260506
+RUN ARCH=$(dpkg --print-architecture) && \
+    if [ "$ARCH" != "riscv64" ]; then \
+      curl -fsSL https://us-apt.pkg.dev/doc/repo-signing-key.gpg \
+        -o /etc/apt/trusted.gpg.d/artifact-registry.asc \
+      && chmod a+r /etc/apt/trusted.gpg.d/artifact-registry.asc \
+      && echo "deb https://us-apt.pkg.dev/projects/android-cuttlefish-artifacts android-cuttlefish main" \
+         > /etc/apt/sources.list.d/android-cuttlefish.list \
+      && apt-get update && apt-get install -y --no-install-recommends \
+           cuttlefish-base=${CF_VERSION} \
+           cuttlefish-user=${CF_VERSION}; \
+    else \
+      curl -fsSL -o /tmp/cuttlefish-base.deb \
+        https://github.com/monkey-jsun/android-cuttlefish/releases/download/${CF_RISCV64_TAG}/cuttlefish-base_${CF_RISCV64_VERSION}_${ARCH}.deb \
+      && apt-get update \
+      && apt-get install -y --no-install-recommends /tmp/cuttlefish-base.deb \
+      && rm -f /tmp/cuttlefish-base.deb; \
+    fi \
     && rm -rf /var/lib/apt/lists/*
 
 # ---- install qemu dependencies ----
