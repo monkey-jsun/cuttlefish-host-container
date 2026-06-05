@@ -12,6 +12,7 @@ CF_ROOT_HOST="cf-data"
 # ============================================================================
 main() {
   parse_args "$@"
+  check_already_running
   check_vm_manager
 
   mkdir -p "$CF_ROOT_HOST"
@@ -73,6 +74,19 @@ main() {
 # ============================================================================
 # Helpers
 # ============================================================================
+
+# Refuse to start if another container from the same image is already up.
+# Lifted from the riscv64 branch (commit 2333696). One cf instance per host
+# per the prototype deployment policy.
+check_already_running() {
+  local existing
+  existing=$(docker ps -q --filter ancestor="$IMAGE_NAME")
+  if [[ -n "$existing" ]]; then
+    echo "[cf-run] ERROR: A cf container is already running (container $existing)." >&2
+    echo "[cf-run]        Stop it first with ./cf-stop.sh, or: docker kill $existing" >&2
+    exit 1
+  fi
+}
 
 usage() {
   cat <<EOF
