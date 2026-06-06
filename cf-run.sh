@@ -75,6 +75,15 @@ if [[ -n "$EXISTING" ]]; then
   exit 1
 fi
 
+# Best-effort modprobe kvm.  KVM may be built as a module (CONFIG_KVM=m,
+# e.g. on the riscv64 kernel) in which case /dev/kvm only appears once
+# kvm.ko is loaded.  qemu_cli runs fine without KVM (slower TCG); crosvm
+# needs it (otherwise the guest never comes up).  Either way, this is
+# best-effort: no failure if the module is missing or the host lacks KVM.
+if [[ ! -e /dev/kvm ]]; then
+  sudo modprobe kvm 2>/dev/null || true
+fi
+
 mkdir -p "$CF_ROOT_HOST"
 CF_ROOT_HOST=$(readlink -f $CF_ROOT_HOST)
 
