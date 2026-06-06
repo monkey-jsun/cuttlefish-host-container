@@ -45,12 +45,18 @@ RUN curl -fsSL -o /tmp/cuttlefish-base.deb \
     && rm -f /tmp/cuttlefish-base.deb \
     && rm -rf /var/lib/apt/lists/*
 
+# ---- WebRTC operator shim deps ----
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 python3-aiohttp openssl \
+    && rm -rf /var/lib/apt/lists/*
+
 # ---- Runtime layout ----
 WORKDIR /cf
 
-# ---- Entrypoint ----
+# ---- Entrypoint + operator shim ----
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh
+COPY operator_shim.py /usr/local/bin/operator_shim.py
+RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/operator_shim.py
 
 # VNC (instance 1) + ADB TCP (instance 1)
 EXPOSE 5900 6520

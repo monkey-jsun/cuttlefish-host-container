@@ -7,7 +7,7 @@ set -euo pipefail
 : "${CF_MEM_MB:=8192}"
 : "${CF_GPU_MODE:=auto}"
 : "${CF_VM_MANAGER:=crosvm}"
-: "${CF_START_WEBRTC:=false}"
+: "${CF_START_WEBRTC:=true}"
 
 CF_ROOT=/cf
 CF_HOST_DIR="$CF_ROOT/host"
@@ -51,10 +51,35 @@ export HOME="$CF_HOST_DIR"
 # ADB still works via vsock either way; this gives a clean boot log and real
 # guest IP connectivity. `stop` first because the init script is not
 # idempotent and bridges persist across runs in --network=host mode.
+# Tear down any stale bridges from a prior run; do NOT bring fresh ones up.
+# Bringing up bridges activates the guest's NetworkMonitor connectivity probes
+# to www.google.com/gen_204, which DNS-blackholes from China and cascades
+# into system_server stalls that trap launcher in Stopped state with all-black
+# surfaces. ADB is vsock, WebRTC is direct via the webRTC binary — neither
+# needs the bridges.
 if [ -x /etc/init.d/cuttlefish-host-resources ]; then
     /etc/init.d/cuttlefish-host-resources stop  >/dev/null 2>&1 || true
-    /etc/init.d/cuttlefish-host-resources start || true
 fi
+
+# WebRTC operator shim. The riscv64 cvd-host package doesn't ship a working
+# webrtc_operator binary, so we substitute a small asyncio bridge that speaks
+# the browser HTTPS/WS protocol on one side and the device unix-socket protocol
+# on the other. Must be listening on /run/cuttlefish/operator before webRTC
+# tries to connect (otherwise the early-init vsock retries we already see grow
+# unbounded).
+mkdir -p /run/cuttlefish /var/log/cuttlefish
+echo "[cf] starting operator_shim on :8444 ..."
+python3 /usr/local/bin/operator_shim.py \
+    --listen-port 8444 \
+    --operator-socket /run/cuttlefish/operator \
+    --client-dir "$CF_HOST_DIR/usr/share/webrtc/assets" \
+    --cert-dir "$CF_HOST_DIR/usr/share/webrtc/certs" \
+    --verbose \
+    > /var/log/cuttlefish/operator_shim.log 2>&1 &
+for i in 1 2 3 4 5 6 7 8 9 10; do
+    [ -S /run/cuttlefish/operator ] && break
+    sleep 0.5
+done
 
 # VNC bridge: container 0.0.0.0:5900 -> container 127.0.0.1:6444 (Cuttlefish VNC)
 socat TCP-LISTEN:5900,bind=0.0.0.0,reuseaddr,fork TCP:127.0.0.1:6444 &
