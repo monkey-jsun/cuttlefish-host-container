@@ -27,8 +27,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 ARG CF_VERSION=1.53.0
 ARG CF_RISCV64_VERSION=1.50.0
 ARG CF_RISCV64_TAG=v${CF_RISCV64_VERSION}-riscv64-260506
+ARG CF_LOCAL_BASE_DEB=.cuttlefish-base.placeholder
+COPY ${CF_LOCAL_BASE_DEB} /tmp/cuttlefish-base.local.deb
 RUN ARCH=$(dpkg --print-architecture) && \
-    if [ "$ARCH" != "riscv64" ]; then \
+    if [ -s /tmp/cuttlefish-base.local.deb ]; then \
+      apt-get update \
+      && apt-get install -y --no-install-recommends /tmp/cuttlefish-base.local.deb; \
+    elif [ "$ARCH" != "riscv64" ]; then \
       curl -fsSL https://us-apt.pkg.dev/doc/repo-signing-key.gpg \
         -o /etc/apt/trusted.gpg.d/artifact-registry.asc \
       && chmod a+r /etc/apt/trusted.gpg.d/artifact-registry.asc \
@@ -44,6 +49,7 @@ RUN ARCH=$(dpkg --print-architecture) && \
       && apt-get install -y --no-install-recommends /tmp/cuttlefish-base.deb \
       && rm -f /tmp/cuttlefish-base.deb; \
     fi \
+    && rm -f /tmp/cuttlefish-base.local.deb \
     && rm -rf /var/lib/apt/lists/*
 
 # ---- install qemu dependencies ----
