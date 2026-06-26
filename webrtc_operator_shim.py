@@ -152,12 +152,88 @@ def ensure_cert(cert_dir: Path) -> tuple[Path, Path]:
 # Both expose the same public interface so signaling_ws() doesn't care which.
 # ---------------------------------------------------------------------------
 
+def _rewrite_candidate(orig: str, new_ip: str) -> str | None:
+    """Rewrite a single 'candidate:...' string (no 'a=' prefix) to point at
+    new_ip while preserving component, protocol, port, etc. Only host-type
+    candidates are rewritten; returns None otherwise. The foundation is
+    suffixed with 'x' so the clone isn't deduped against the original."""
+    if not orig.startswith("candidate:"):
+        return None
+    parts = orig[len("candidate:"):].split(" ")
+    # parts: foundation component proto priority address port "typ" type [...]
+    if len(parts) < 8 or parts[6] != "typ" or parts[7] != "host":
+        return None
+    parts[0] = parts[0] + "x"
+    parts[4] = new_ip
+    return "candidate:" + " ".join(parts)
+
+
+def _inject_into_sdp(sdp: str, extra_ips: list[str]) -> str:
+    """For every 'a=candidate:... typ host' line, append cloned lines with
+    the same port/component but the override IP. Preserve original line
+    separators."""
+    sep = "\r\n" if "\r\n" in sdp else "\n"
+    out: list[str] = []
+    for line in sdp.split(sep):
+        out.append(line)
+        if line.startswith("a=candidate:"):
+            for ip in extra_ips:
+                alt = _rewrite_candidate(line[2:], ip)
+                if alt is not None:
+                    out.append("a=" + alt)
+    return sep.join(out)
+
+
+def _process_device_payload(payload: dict, extra_ips: list[str]) -> list[dict]:
+    """Return [payload] for irrelevant payloads; or [mutated_payload] when
+    SDP carries a=candidate lines; or [original, clone1, clone2...] when the
+    payload is a single trickle ICE candidate."""
+    if not extra_ips or not isinstance(payload, dict):
+        return [payload]
+
+    # SDP offer/answer with embedded candidate lines.
+    sdp = payload.get("sdp")
+    if isinstance(sdp, str) and "a=candidate:" in sdp:
+        new = dict(payload)
+        new["sdp"] = _inject_into_sdp(sdp, extra_ips)
+        return [new]
+
+    # Trickle ICE: payload may carry the candidate string directly or
+    # nested under "candidate": {candidate, sdpMid, sdpMLineIndex}.
+    cand = payload.get("candidate")
+    if isinstance(cand, str) and cand.startswith("candidate:"):
+        result = [payload]
+        for ip in extra_ips:
+            alt = _rewrite_candidate(cand, ip)
+            if alt is not None:
+                clone = dict(payload)
+                clone["candidate"] = alt
+                result.append(clone)
+        return result
+
+    if isinstance(cand, dict) and isinstance(cand.get("candidate"), str) \
+            and cand["candidate"].startswith("candidate:"):
+        result = [payload]
+        for ip in extra_ips:
+            alt = _rewrite_candidate(cand["candidate"], ip)
+            if alt is not None:
+                clone = dict(payload)
+                inner = dict(cand)
+                inner["candidate"] = alt
+                clone["candidate"] = inner
+                result.append(clone)
+        return result
+
+    return [payload]
+
+
 class _DeviceBase:
     """Shared logic: registration/forwarding state machine and the
     per-browser inbox bookkeeping.  Subclasses provide send() and close()."""
 
-    def __init__(self, ice_servers: list) -> None:
+    def __init__(self, ice_servers: list, extra_host_ips: list[str]) -> None:
         self.ice_servers = ice_servers
+        self.extra_host_ips = extra_host_ips
         self.device_info: dict | None = None
         self.device_id: str | None = None
         # client_id -> Queue of payloads, populated from the device's
@@ -220,7 +296,8 @@ class _DeviceBase:
                 log.warning(
                     "device forward for unknown client_id=%r, dropping", cid)
             else:
-                await q.put(payload)
+                for p in _process_device_payload(payload, self.extra_host_ips):
+                    await q.put(p)
         else:
             log.warning("Unexpected device message_type=%r, dropping", mtype)
 
@@ -229,8 +306,9 @@ class WSDeviceConnection(_DeviceBase):
     """Device reached over an aiohttp WebSocket opened to /register_device.
     Connection lifecycle is the WebSocket's lifecycle."""
 
-    def __init__(self, ws: web.WebSocketResponse, ice_servers: list) -> None:
-        super().__init__(ice_servers)
+    def __init__(self, ws: web.WebSocketResponse, ice_servers: list,
+                 extra_host_ips: list[str]) -> None:
+        super().__init__(ice_servers, extra_host_ips)
         self.ws = ws
 
     async def send(self, msg: dict) -> None:
@@ -261,8 +339,9 @@ class UnixDeviceConnection(_DeviceBase):
     """Device reached over a SOCK_SEQPACKET unix socket.  Each send() emits
     exactly one whole message; reads receive one whole message at a time."""
 
-    def __init__(self, sock: socket.socket, ice_servers: list) -> None:
-        super().__init__(ice_servers)
+    def __init__(self, sock: socket.socket, ice_servers: list,
+                 extra_host_ips: list[str]) -> None:
+        super().__init__(ice_servers, extra_host_ips)
         self.sock = sock
         self.sock.setblocking(False)
         self._closed = False
@@ -337,7 +416,8 @@ async def register_device_ws(req: web.Request) -> web.WebSocketResponse:
     app = req.app
     ws = web.WebSocketResponse()
     await ws.prepare(req)
-    device = WSDeviceConnection(ws, app["ice_servers"])
+    device = WSDeviceConnection(
+        ws, app["ice_servers"], app["extra_host_ips"])
     await _install_device(app, device)
     try:
         await device.run()
@@ -368,7 +448,8 @@ async def serve_operator_socket(app: web.Application, path: str) -> None:
     while True:
         conn, _ = await loop.sock_accept(srv)
         log.info("cf device connected on %s", path)
-        device = UnixDeviceConnection(conn, app["ice_servers"])
+        device = UnixDeviceConnection(
+            conn, app["ice_servers"], app["extra_host_ips"])
         await _install_device(app, device)
         try:
             await device.run()
@@ -486,10 +567,16 @@ async def amain(args: argparse.Namespace) -> None:
     else:
         log.info("No CF_ICE_SERVERS_JSON; serving empty ice_servers list")
 
+    extra_host_ips = list(args.extra_host_ip or [])
+    if extra_host_ips:
+        log.info("Will inject extra host candidates at: %s",
+                 ", ".join(extra_host_ips))
+
     app = web.Application()
     app["device"] = None
     app["client_dir"] = Path(args.client_dir)
     app["ice_servers"] = ice_servers
+    app["extra_host_ips"] = extra_host_ips
 
     app.router.add_get("/register_device", register_device_ws)
     app.router.add_get("/connect_client", signaling_ws)
@@ -544,6 +631,13 @@ def main() -> int:
                     help="cf-style SOCK_SEQPACKET path; empty disables "
                          "the unix-socket device transport "
                          f"(typical: {DEFAULT_OPERATOR_SOCK})")
+    ap.add_argument("--extra-host-ip", action="append", default=[],
+                    metavar="IP",
+                    help="For every host ICE candidate the device advertises, "
+                         "emit a parallel host candidate with this address "
+                         "(same port). Use when the container is behind NAT "
+                         "and clients reach the host via a side channel "
+                         "(e.g. tailscale). Repeatable.")
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
     logging.basicConfig(

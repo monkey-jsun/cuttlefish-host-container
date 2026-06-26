@@ -64,6 +64,10 @@ fi
 # binary connects to. ice_servers are signaled to both sides.
 SIG_SERVER_FLAGS=()
 SHIM_OPERATOR_SOCKET_FLAG=()
+# Must match the docker -p ...UDP forward in cf-run.sh. Explicit (rather
+# than relying on launch_cvd's default) so the forward stays valid if
+# upstream changes its default. cf/AOSP spell the flag differently.
+WEBRTC_UDP_PORT_RANGE_FLAG=()
 if [[ "$CF_VM_MANAGER" == "crosvm" ]]; then
   # AOSP- vs cf-built launch_cvd have diverged on webrtc flags. AOSP keeps
   # the granular --webrtc_sig_server_{path,port,secure} set; cf collapsed
@@ -93,6 +97,7 @@ if [[ "$CF_VM_MANAGER" == "crosvm" ]]; then
     SHIM_OPERATOR_SOCKET_FLAG=(--operator-socket /run/cuttlefish/operator)
     # cf dialect: no sig_server flags; launch_cvd's default
     # --webrtc_sig_server_addr=/run/cuttlefish/operator is correct.
+    WEBRTC_UDP_PORT_RANGE_FLAG=(--udp_port_range=15550:15599)
   else
     # AOSP dialect: tell launch_cvd to not start its own sig server and
     # point its webrtc binary at our shim's /register_device WS endpoint.
@@ -103,6 +108,19 @@ if [[ "$CF_VM_MANAGER" == "crosvm" ]]; then
       --webrtc_sig_server_path=/register_device
       --webrtc_sig_server_secure=true
     )
+    WEBRTC_UDP_PORT_RANGE_FLAG=(--webrtc_udp_port_range=15550:15599)
+  fi
+
+  # CF_EXTRA_HOST_IPS (comma-separated) -> repeated --extra-host-ip flags.
+  # See shim --help; used to bridge browser to container when both reach the
+  # host via a side channel (e.g. tailscale) that the container itself
+  # isn't on.
+  SHIM_EXTRA_HOST_IP_FLAGS=()
+  if [[ -n "${CF_EXTRA_HOST_IPS:-}" ]]; then
+    IFS=',' read -ra _extra_ips <<< "$CF_EXTRA_HOST_IPS"
+    for _ip in "${_extra_ips[@]}"; do
+      [[ -n "$_ip" ]] && SHIM_EXTRA_HOST_IP_FLAGS+=(--extra-host-ip "$_ip")
+    done
   fi
 
   /usr/local/bin/webrtc_operator_shim.py \
@@ -110,6 +128,7 @@ if [[ "$CF_VM_MANAGER" == "crosvm" ]]; then
     --cert-dir   "$CF_HOST_DIR/usr/share/webrtc/certs" \
     --listen-port 8443 \
     "${SHIM_OPERATOR_SOCKET_FLAG[@]}" \
+    "${SHIM_EXTRA_HOST_IP_FLAGS[@]}" \
     &
 fi
 
@@ -139,6 +158,7 @@ exec launch_cvd \
   --start_webrtc=$CF_START_WEBRTC \
   --report_anonymous_usage_stats=y \
   "${SIG_SERVER_FLAGS[@]}" \
+  "${WEBRTC_UDP_PORT_RANGE_FLAG[@]}" \
   "$@" \
   || tail -f /dev/null
   # run forever even on error, for debugging

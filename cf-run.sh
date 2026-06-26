@@ -14,6 +14,7 @@ main() {
   parse_args "$@"
   check_already_running
   check_vm_manager
+  auto_set_extra_host_ips
 
   mkdir -p "$CF_ROOT_HOST"
   CF_ROOT_HOST=$(readlink -f $CF_ROOT_HOST)
@@ -59,11 +60,17 @@ main() {
   fi
 
   # run
+  # WebRTC ICE/UDP forward: cvd's libwebrtc PortAllocator is bound to
+  # 15550-15599/udp by default (cf flag --udp_port_range, AOSP flag
+  # --webrtc_udp_port_range). Forwarding the same range gives docker a
+  # static 1:1 NAT mapping, so srflx candidates resolve correctly even
+  # behind symmetric upstream NAT.
   docker run -it --rm \
     $SECURE_ARGS \
     -p 8443:8443 \
     -p 5900:5900 \
     -p 6520:6520 \
+    -p 15550-15599:15550-15599/udp \
     -v "$CF_ROOT_HOST:/cf" \
     "${FORWARD_ARGS[@]}" \
     "${DOCKER_ARGS[@]}" \
@@ -174,6 +181,28 @@ check_vm_manager() {
 
   echo "[cf-run] CF_VM_MANAGER : $detected (auto-detected)"
   FORWARD_ARGS+=(--env="CF_VM_MANAGER=$detected")
+}
+
+# Enumerate host IPs reachable from outside the container netns and feed
+# them to the shim as extra host ICE candidates. Strategy is "advertise
+# every IP a client could plausibly use to reach this host" (LAN, tailscale,
+# other VPNs); the docker -p UDP forward in main() lets ICE-checks land on
+# any of them. Skipped if the caller already passed CF_EXTRA_HOST_IPS via
+# --docker-arg (theirs wins, including empty to disable).
+auto_set_extra_host_ips() {
+  if printf '%s\n' "${DOCKER_ARGS[@]}" | grep -qE '^CF_EXTRA_HOST_IPS='; then
+    return
+  fi
+  local ips
+  ips=$(ip -4 -o addr show scope global 2>/dev/null \
+        | awk '$2 !~ /^(lo|docker[0-9]+|veth|br-|cvd-)/ \
+                 { split($4, a, "/"); print a[1] }' \
+        | paste -sd, -)
+  if [[ -z "$ips" ]]; then
+    return
+  fi
+  echo "[cf-run] CF_EXTRA_HOST_IPS : $ips (auto-detected)"
+  FORWARD_ARGS+=(--env="CF_EXTRA_HOST_IPS=$ips")
 }
 
 # Echo normalized host arch (x86_64 / aarch64 / riscv64 / ...).
