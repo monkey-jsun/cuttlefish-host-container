@@ -4,12 +4,20 @@ Single-device webrtc-operator shim for cuttlefish.
 
 Replaces the upstream `webrtc_operator` daemon for the single-instance,
 single-container-per-host policy (see memory:cf-deployment-policy-prototype).
-Bridges:
+Bridges two transports on the device side and one on the browser side:
 
-    browser  <--HTTPS+WS:8443-->  [this shim]  <--WS:/register_device-->  webRTC
+    browser  <--HTTPS+WS:8443-->  [this shim]  <--WS:/register_device-->  webRTC   (AOSP)
+                                              <--SOCK_SEQPACKET-------->  webRTC   (cf)
+
+AOSP-built launch_cvd opens the WebSocket at /register_device. cf-built
+launch_cvd connects to a SOCK_SEQPACKET Unix socket whose path it gets via
+--webrtc_sig_server_addr (default /run/cuttlefish/operator). The shim
+listens on whichever transports are configured and accepts the first device
+that connects via either; subsequent device connections replace the prior
+one (single-device policy).
 
 Both transports speak the same JSON envelope vocabulary defined in
-host/frontend/webrtc_operator/constants/signaling_constants.h.  The two
+host/frontend/webrtc_operator/constants/signaling_constants.h. The two
 sides use different envelope wrappings; the shim rewrites between them.
 
 Browser endpoints:
@@ -18,8 +26,9 @@ Browser endpoints:
   GET /{name}.{html|css|js|png|svg|ico}  -- static
   GET /connect_client         -- WebSocket: browser signaling channel
 
-Device endpoint:
-  GET /register_device        -- WebSocket: webRTC binary registers + signals
+Device endpoints:
+  GET /register_device        -- WebSocket: AOSP webRTC binary registers + signals
+  unix socket (--operator-socket PATH)  -- SOCK_SEQPACKET: cf webRTC binary
 
 Message types (browser <--> shim <--> device, all JSON):
   device --> shim
@@ -42,7 +51,7 @@ ICE servers are read from the CF_ICE_SERVERS_JSON env var at startup
 
 Usage:
     operator_shim.py [--listen-port N] [--client-dir DIR] [--cert-dir DIR]
-                     [--bind ADDR] [--verbose]
+                     [--bind ADDR] [--operator-socket PATH] [--verbose]
 """
 
 import argparse
@@ -50,6 +59,7 @@ import asyncio
 import json
 import logging
 import os
+import socket
 import ssl
 import subprocess
 import sys
@@ -81,6 +91,7 @@ T_DEVICE_INFO = "device_info"
 DEFAULT_LISTEN_PORT = 8443
 DEFAULT_CLIENT_DIR = "/usr/share/webrtc/assets"
 DEFAULT_CERT_DIR = "/usr/share/webrtc/certs"
+DEFAULT_OPERATOR_SOCK = "/run/cuttlefish/operator"
 
 # A fresh client_id per browser session. Reusing 1 across reconnects makes
 # the device-side streamer reuse a stale ClientHandler (per
@@ -109,6 +120,10 @@ def load_ice_servers_from_env() -> list:
         return []
 
 
+# ---------------------------------------------------------------------------
+# Self-signed cert.  Generated once into /usr/share/webrtc/certs/ if absent.
+# ---------------------------------------------------------------------------
+
 def ensure_cert(cert_dir: Path) -> tuple[Path, Path]:
     cert = cert_dir / "server.crt"
     key = cert_dir / "server.key"
@@ -130,22 +145,34 @@ def ensure_cert(cert_dir: Path) -> tuple[Path, Path]:
     return cert, key
 
 
-class WSDeviceConnection:
-    """One device (the cuttlefish webRTC binary), reached over a WebSocket
-    opened to /register_device. The connection lifecycle is the WebSocket's
-    lifecycle."""
+# ---------------------------------------------------------------------------
+# Device side.  Two parallel implementations:
+#   - WSDeviceConnection:    AOSP's webRTC, over the /register_device WS
+#   - UnixDeviceConnection:  cf's webRTC, over a SOCK_SEQPACKET unix socket
+# Both expose the same public interface so signaling_ws() doesn't care which.
+# ---------------------------------------------------------------------------
 
-    def __init__(self, ws: web.WebSocketResponse, ice_servers: list) -> None:
-        self.ws = ws
+class _DeviceBase:
+    """Shared logic: registration/forwarding state machine and the
+    per-browser inbox bookkeeping.  Subclasses provide send() and close()."""
+
+    def __init__(self, ice_servers: list) -> None:
         self.ice_servers = ice_servers
         self.device_info: dict | None = None
         self.device_id: str | None = None
         # client_id -> Queue of payloads, populated from the device's
-        # {forward, client_id, payload} envelopes by _reader.
+        # {forward, client_id, payload} envelopes by the reader loop.
         self._inboxes: dict[int, asyncio.Queue[dict]] = {}
 
     async def send(self, msg: dict) -> None:
-        await self.ws.send_json(msg)
+        raise NotImplementedError
+
+    async def close(self) -> None:
+        raise NotImplementedError
+
+    @property
+    def is_closed(self) -> bool:
+        raise NotImplementedError
 
     async def send_client_msg(self, client_id: int, payload: dict) -> None:
         await self.send({
@@ -160,7 +187,7 @@ class WSDeviceConnection:
                 F_TYPE: T_CLIENT_DISCONNECTED,
                 F_CLIENT_ID: client_id,
             })
-        except (ConnectionError, RuntimeError):
+        except (ConnectionError, OSError, RuntimeError):
             pass
 
     def register_browser(self, client_id: int) -> asyncio.Queue:
@@ -170,6 +197,52 @@ class WSDeviceConnection:
 
     def unregister_browser(self, client_id: int) -> None:
         self._inboxes.pop(client_id, None)
+
+    async def _on_device_message(self, msg: dict) -> None:
+        """Handle one parsed JSON envelope from the device."""
+        mtype = msg.get(F_TYPE)
+        log.debug("device -> %s", mtype)
+        if mtype == T_REGISTER:
+            self.device_info = msg.get(F_DEVICE_INFO, {})
+            self.device_id = msg.get(F_DEVICE_ID)
+            log.info("Device registered: id=%s", self.device_id)
+            await self.send({
+                F_TYPE: T_CONFIG,
+                F_ICE_SERVERS: self.ice_servers,
+            })
+        elif mtype == T_FORWARD:
+            # Route by client_id so concurrent browsers don't steal each
+            # other's SDP/ICE messages.
+            cid = msg.get(F_CLIENT_ID)
+            payload = msg.get(F_PAYLOAD, {})
+            q = self._inboxes.get(cid)
+            if q is None:
+                log.warning(
+                    "device forward for unknown client_id=%r, dropping", cid)
+            else:
+                await q.put(payload)
+        else:
+            log.warning("Unexpected device message_type=%r, dropping", mtype)
+
+
+class WSDeviceConnection(_DeviceBase):
+    """Device reached over an aiohttp WebSocket opened to /register_device.
+    Connection lifecycle is the WebSocket's lifecycle."""
+
+    def __init__(self, ws: web.WebSocketResponse, ice_servers: list) -> None:
+        super().__init__(ice_servers)
+        self.ws = ws
+
+    async def send(self, msg: dict) -> None:
+        await self.ws.send_json(msg)
+
+    async def close(self) -> None:
+        if not self.ws.closed:
+            await self.ws.close()
+
+    @property
+    def is_closed(self) -> bool:
+        return self.ws.closed
 
     async def run(self) -> None:
         """Read frames from the device until the WS closes."""
@@ -181,58 +254,140 @@ class WSDeviceConnection:
             except json.JSONDecodeError:
                 log.exception("Bad JSON from device: %r", raw.data[:200])
                 continue
-            mtype = msg.get(F_TYPE)
-            log.debug("device -> %s", mtype)
+            await self._on_device_message(msg)
 
-            if mtype == T_REGISTER:
-                self.device_info = msg.get(F_DEVICE_INFO, {})
-                self.device_id = msg.get(F_DEVICE_ID)
-                log.info("Device registered: id=%s", self.device_id)
-                await self.send({
-                    F_TYPE: T_CONFIG,
-                    F_ICE_SERVERS: self.ice_servers,
-                })
-            elif mtype == T_FORWARD:
-                cid = msg.get(F_CLIENT_ID)
-                payload = msg.get(F_PAYLOAD, {})
-                q = self._inboxes.get(cid)
-                if q is None:
-                    log.warning(
-                        "device forward for unknown client_id=%r, dropping",
-                        cid)
-                else:
-                    await q.put(payload)
-            else:
-                log.warning("Unexpected device message_type=%r, dropping", mtype)
 
+class UnixDeviceConnection(_DeviceBase):
+    """Device reached over a SOCK_SEQPACKET unix socket.  Each send() emits
+    exactly one whole message; reads receive one whole message at a time."""
+
+    def __init__(self, sock: socket.socket, ice_servers: list) -> None:
+        super().__init__(ice_servers)
+        self.sock = sock
+        self.sock.setblocking(False)
+        self._closed = False
+
+    async def send(self, msg: dict) -> None:
+        if self._closed:
+            return
+        data = json.dumps(msg).encode()
+        loop = asyncio.get_running_loop()
+        await loop.sock_sendall(self.sock, data)
+
+    async def close(self) -> None:
+        if not self._closed:
+            self._closed = True
+            try:
+                self.sock.close()
+            except OSError:
+                pass
+
+    @property
+    def is_closed(self) -> bool:
+        return self._closed
+
+    async def run(self) -> None:
+        """Read packets from the device socket until close or EOF."""
+        loop = asyncio.get_running_loop()
+        try:
+            while True:
+                try:
+                    data = await loop.sock_recv(self.sock, 1 << 16)
+                except OSError as e:
+                    log.warning("Device socket error: %s", e)
+                    return
+                if not data:
+                    log.info("Device closed connection")
+                    return
+                try:
+                    msg = json.loads(data)
+                except json.JSONDecodeError:
+                    log.exception("Bad JSON from device: %r", data[:200])
+                    continue
+                await self._on_device_message(msg)
+        finally:
+            await self.close()
+
+
+# ---------------------------------------------------------------------------
+# Active-device tracking.  Shared by both transports; a connect on either
+# transport replaces the prior device (single-device policy).
+# ---------------------------------------------------------------------------
+
+async def _install_device(app: web.Application, device: _DeviceBase) -> None:
+    prior: _DeviceBase | None = app["device"]
+    app["device"] = device
+    if prior is not None and not prior.is_closed and prior is not device:
+        log.info("Replacing prior device connection")
+        await prior.close()
+
+
+async def _retire_device(app: web.Application, device: _DeviceBase) -> None:
+    if app["device"] is device:
+        app["device"] = None
+
+
+# ---------------------------------------------------------------------------
+# /register_device endpoint (AOSP-style WS transport).
+# ---------------------------------------------------------------------------
 
 async def register_device_ws(req: web.Request) -> web.WebSocketResponse:
-    """The /register_device endpoint -- single-device policy: one active
-    device at a time. If a device is already registered we accept the new
-    one and replace; the old WS closes naturally."""
+    """Single-device policy: at most one active device.  Existing device is
+    replaced on each new registration."""
     app = req.app
     ws = web.WebSocketResponse()
     await ws.prepare(req)
     device = WSDeviceConnection(ws, app["ice_servers"])
-    prior = app["device"]
-    app["device"] = device
-    if prior is not None and not prior.ws.closed:
-        log.info("Replacing prior device connection")
-        await prior.ws.close()
+    await _install_device(app, device)
     try:
         await device.run()
     finally:
-        if app["device"] is device:
-            app["device"] = None
+        await _retire_device(app, device)
         log.info("Device WebSocket closed")
     return ws
 
+
+# ---------------------------------------------------------------------------
+# Unix socket listener (cf-style SOCK_SEQPACKET transport).
+# Long-running accept loop; each accepted connection installs a new device.
+# ---------------------------------------------------------------------------
+
+async def serve_operator_socket(app: web.Application, path: str) -> None:
+    try:
+        os.unlink(path)
+    except FileNotFoundError:
+        pass
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    srv = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
+    srv.setblocking(False)
+    srv.bind(path)
+    os.chmod(path, 0o666)
+    srv.listen(1)
+    log.info("Listening for cf-style device on %s", path)
+    loop = asyncio.get_running_loop()
+    while True:
+        conn, _ = await loop.sock_accept(srv)
+        log.info("cf device connected on %s", path)
+        device = UnixDeviceConnection(conn, app["ice_servers"])
+        await _install_device(app, device)
+        try:
+            await device.run()
+        except Exception:
+            log.exception("Unix device loop crashed")
+        finally:
+            await _retire_device(app, device)
+            log.info("cf device disconnected")
+
+
+# ---------------------------------------------------------------------------
+# Browser side.
+# ---------------------------------------------------------------------------
 
 async def serve_client_html(req: web.Request):
     """GET / : if URL has no ?deviceId=, redirect to one that does (so users
     don't have to type it). If no device is registered yet, serve a small
     holding page that refreshes itself."""
-    device: WSDeviceConnection | None = req.app["device"]
+    device: _DeviceBase | None = req.app["device"]
     if "deviceId" not in req.query:
         if device is not None and device.device_id:
             raise web.HTTPFound(f"/?deviceId={device.device_id}")
@@ -256,7 +411,7 @@ async def serve_device_file(req: web.Request) -> web.FileResponse:
 
 
 async def signaling_ws(req: web.Request):
-    device: WSDeviceConnection | None = req.app["device"]
+    device: _DeviceBase | None = req.app["device"]
     if device is None:
         return web.Response(status=503, text="device not registered yet")
 
@@ -316,6 +471,10 @@ async def signaling_ws(req: web.Request):
     return ws
 
 
+# ---------------------------------------------------------------------------
+# Main.
+# ---------------------------------------------------------------------------
+
 async def amain(args: argparse.Namespace) -> None:
     cert, key = ensure_cert(Path(args.cert_dir))
     ssl_ctx = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
@@ -354,8 +513,22 @@ async def amain(args: argparse.Namespace) -> None:
     log.info("HTTPS on %s:%d, asset dir=%s",
              args.bind, args.listen_port, args.client_dir)
 
-    # Run forever; the WebSocket lifecycles drive the device connection.
-    await asyncio.Event().wait()
+    bg_tasks: list[asyncio.Task] = []
+    if args.operator_socket:
+        bg_tasks.append(asyncio.create_task(
+            serve_operator_socket(app, args.operator_socket)))
+
+    # Run forever; transports drive device lifecycle.
+    if bg_tasks:
+        # Surface accept-loop crashes rather than silently lingering.
+        done, pending = await asyncio.wait(
+            bg_tasks, return_when=asyncio.FIRST_EXCEPTION)
+        for t in done:
+            exc = t.exception()
+            if exc:
+                raise exc
+    else:
+        await asyncio.Event().wait()
 
 
 def main() -> int:
@@ -366,6 +539,11 @@ def main() -> int:
     ap.add_argument("--client-dir", default=DEFAULT_CLIENT_DIR)
     ap.add_argument("--cert-dir", default=DEFAULT_CERT_DIR)
     ap.add_argument("--bind", default="0.0.0.0")
+    ap.add_argument("--operator-socket",
+                    default="",
+                    help="cf-style SOCK_SEQPACKET path; empty disables "
+                         "the unix-socket device transport "
+                         f"(typical: {DEFAULT_OPERATOR_SOCK})")
     ap.add_argument("--verbose", action="store_true")
     args = ap.parse_args()
     logging.basicConfig(

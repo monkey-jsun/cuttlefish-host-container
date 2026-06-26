@@ -59,28 +59,58 @@ if [[ -x /etc/init.d/cuttlefish-host-resources ]]; then
 fi
 
 # Start the in-container operator shim. Takes over webrtc_operator's role:
-# serves the browser-side HTTPS+WebSocket on 8443, bridges to the webRTC
-# binary via /register_device, and signals ice_servers to both sides.
-# Default ice_servers preserves the same STUN config webrtc_operator's
-# client.html shipped, so remote browsers continue to hole-punch.
+# serves the browser-side HTTPS+WebSocket on 8443 + (for cf launch_cvd) a
+# SOCK_SEQPACKET unix socket at /run/cuttlefish/operator that cf's webRTC
+# binary connects to. ice_servers are signaled to both sides.
 SIG_SERVER_FLAGS=()
+SHIM_OPERATOR_SOCKET_FLAG=()
 if [[ "$CF_VM_MANAGER" == "crosvm" ]]; then
+  # AOSP- vs cf-built launch_cvd have diverged on webrtc flags. AOSP keeps
+  # the granular --webrtc_sig_server_{path,port,secure} set; cf collapsed
+  # them into a single --webrtc_sig_server_addr that points at a unix
+  # socket (default /run/cuttlefish/operator). Probe once to pick the
+  # right flag set.
+  if launch_cvd --helpshort 2>/dev/null | grep -q webrtc_sig_server_path; then
+    LAUNCH_CVD_DIALECT=aosp
+  else
+    LAUNCH_CVD_DIALECT=cf
+  fi
+  echo "[cf] launch_cvd dialect: $LAUNCH_CVD_DIALECT"
+
   CF_ICE_SERVERS_DEFAULT='[{"urls":["stun:stun.l.google.com:19302"]}]'
   : "${CF_ICE_SERVERS_JSON:=$CF_ICE_SERVERS_DEFAULT}"
   export CF_ICE_SERVERS_JSON
+
+  if [[ "$LAUNCH_CVD_DIALECT" == "cf" ]]; then
+    # cf launch_cvd connects to /run/cuttlefish/operator; have the shim
+    # listen there too. Also disable cuttlefish-base.deb's webrtc_operator
+    # service if it would otherwise grab the same socket / port 8443.
+    if command -v systemctl >/dev/null 2>&1; then
+      systemctl stop  cuttlefish-operator.service 2>/dev/null || true
+      systemctl mask  cuttlefish-operator.service 2>/dev/null || true
+    fi
+    mkdir -p /run/cuttlefish
+    SHIM_OPERATOR_SOCKET_FLAG=(--operator-socket /run/cuttlefish/operator)
+    # cf dialect: no sig_server flags; launch_cvd's default
+    # --webrtc_sig_server_addr=/run/cuttlefish/operator is correct.
+  else
+    # AOSP dialect: tell launch_cvd to not start its own sig server and
+    # point its webrtc binary at our shim's /register_device WS endpoint.
+    SIG_SERVER_FLAGS=(
+      --webrtc_start_sig_server=false
+      --webrtc_sig_server_addr=127.0.0.1
+      --webrtc_sig_server_port=8443
+      --webrtc_sig_server_path=/register_device
+      --webrtc_sig_server_secure=true
+    )
+  fi
+
   /usr/local/bin/webrtc_operator_shim.py \
     --client-dir "$CF_HOST_DIR/usr/share/webrtc/assets" \
     --cert-dir   "$CF_HOST_DIR/usr/share/webrtc/certs" \
     --listen-port 8443 \
+    "${SHIM_OPERATOR_SOCKET_FLAG[@]}" \
     &
-  SIG_SERVER_FLAGS=(
-    --start_webrtc_sig_server=false
-    --webrtc_sig_server_addr=127.0.0.1
-    --webrtc_sig_server_port=8443
-    --webrtc_sig_server_path=/register_device
-    --webrtc_sig_server_secure=true
-    --verify_sig_server_certificate=false
-  )
 fi
 
 # VNC bridge: container 0.0.0.0:5900 -> container 127.0.0.1:6444 (Cuttlefish VNC)
