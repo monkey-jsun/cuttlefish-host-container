@@ -152,18 +152,23 @@ def ensure_cert(cert_dir: Path) -> tuple[Path, Path]:
 # Both expose the same public interface so signaling_ws() doesn't care which.
 # ---------------------------------------------------------------------------
 
-def _rewrite_candidate(orig: str, new_ip: str) -> str | None:
+def _rewrite_candidate(orig: str, new_ip: str, ip_index: int) -> str | None:
     """Rewrite a single 'candidate:...' string (no 'a=' prefix) to point at
-    new_ip while preserving component, protocol, port, etc. Only host-type
-    candidates are rewritten; returns None otherwise. The foundation is
-    suffixed with 'x' so the clone isn't deduped against the original."""
+    new_ip while preserving component, protocol, port, etc. Only UDP host
+    candidates are rewritten; returns None otherwise (TCP host candidates
+    would also be cloned but we don't forward a TCP port range, so the
+    clone could never form a pair). The foundation is suffixed with
+    'x<ip_index>' so multi-IP clones don't share a foundation, which
+    could otherwise let an RFC-strict ICE stack dedupe them."""
     if not orig.startswith("candidate:"):
         return None
     parts = orig[len("candidate:"):].split(" ")
     # parts: foundation component proto priority address port "typ" type [...]
     if len(parts) < 8 or parts[6] != "typ" or parts[7] != "host":
         return None
-    parts[0] = parts[0] + "x"
+    if parts[2].lower() != "udp":
+        return None
+    parts[0] = parts[0] + f"x{ip_index}"
     parts[4] = new_ip
     return "candidate:" + " ".join(parts)
 
@@ -177,8 +182,8 @@ def _inject_into_sdp(sdp: str, extra_ips: list[str]) -> str:
     for line in sdp.split(sep):
         out.append(line)
         if line.startswith("a=candidate:"):
-            for ip in extra_ips:
-                alt = _rewrite_candidate(line[2:], ip)
+            for i, ip in enumerate(extra_ips):
+                alt = _rewrite_candidate(line[2:], ip, i)
                 if alt is not None:
                     out.append("a=" + alt)
     return sep.join(out)
@@ -203,8 +208,8 @@ def _process_device_payload(payload: dict, extra_ips: list[str]) -> list[dict]:
     cand = payload.get("candidate")
     if isinstance(cand, str) and cand.startswith("candidate:"):
         result = [payload]
-        for ip in extra_ips:
-            alt = _rewrite_candidate(cand, ip)
+        for i, ip in enumerate(extra_ips):
+            alt = _rewrite_candidate(cand, ip, i)
             if alt is not None:
                 clone = dict(payload)
                 clone["candidate"] = alt
@@ -214,8 +219,8 @@ def _process_device_payload(payload: dict, extra_ips: list[str]) -> list[dict]:
     if isinstance(cand, dict) and isinstance(cand.get("candidate"), str) \
             and cand["candidate"].startswith("candidate:"):
         result = [payload]
-        for ip in extra_ips:
-            alt = _rewrite_candidate(cand["candidate"], ip)
+        for i, ip in enumerate(extra_ips):
+            alt = _rewrite_candidate(cand["candidate"], ip, i)
             if alt is not None:
                 clone = dict(payload)
                 inner = dict(cand)

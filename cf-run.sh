@@ -187,7 +187,8 @@ check_vm_manager() {
 # them to the shim as extra host ICE candidates. Strategy is "advertise
 # every IP a client could plausibly use to reach this host" (LAN, tailscale,
 # other VPNs); the docker -p UDP forward in main() lets ICE-checks land on
-# any of them. Skipped if the caller already passed CF_EXTRA_HOST_IPS via
+# any of them. IPv4 only -- v6 deferred until we have a setup that needs
+# it. Skipped if the caller already passed CF_EXTRA_HOST_IPS via
 # --docker-arg (theirs wins, including empty to disable).
 auto_set_extra_host_ips() {
   if printf '%s\n' "${DOCKER_ARGS[@]}" | grep -qE '^CF_EXTRA_HOST_IPS='; then
