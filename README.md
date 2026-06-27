@@ -59,6 +59,23 @@ Additional notes:
 ## TODO
 * GPU acceleration does not work yet
 
+## Networking
+
+Plain and standard docker bridge mode, no additional tun/tap/etc network interface pollution to the host.  Container reaches outbound via docker0 MASQUERADE; clients reach inbound via published host ports:
+
+* `8443/tcp` — WebRTC HTTPS (crosvm path)
+* `5900/tcp` — VNC (qemu path; in-container socat bridge from launch_cvd's `127.0.0.1:6444`)
+* `6520/tcp` — adb
+* `15550-15599/udp` — WebRTC ICE media (crosvm path)
+
+VNC and adb bind `0.0.0.0`; reachable from anywhere on the host LAN.  VNC needs no further wiring — `gvncviewer <host>` works.
+
+WebRTC needs more care:
+
+1. cvd is pinned to UDP `15550-15599` via `--udp_port_range` (cf dialect) / `--webrtc_udp_port_range` (AOSP), forwarded 1:1 to the host.  Static DNAT, no STUN/TURN dependency — the browser sends UDP straight to `<host-ip>:15550-15599` and docker DNATs it into the container.
+2. `cf-run.sh` auto-detects the host's outward IPv4 addresses (LAN, tailscale, VPN) and injects them as ICE host candidates, so the browser actually has a reachable address to try.
+3. Override or disable with `--docker-arg --env --docker-arg CF_EXTRA_HOST_IPS=<csv>` (empty = off; reasonable when both peers have public IPs and srflx hole-punching already works).
+
 ---
 ![Screenshot 2025-12-17 204158](https://github.com/user-attachments/assets/dff3fb6a-461b-440c-a323-85a6d6f9ad81)
 
