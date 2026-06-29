@@ -191,7 +191,7 @@ check_vm_manager() {
 # it. Skipped if the caller already passed CF_EXTRA_HOST_IPS via
 # --docker-arg (theirs wins, including empty to disable).
 auto_set_extra_host_ips() {
-  if printf '%s\n' "${FORWARD_ARGS[@]}" | grep -qF -- 'CF_EXTRA_HOST_IPS='; then
+  if printf '%s\n' "${DOCKER_ARGS[@]}" | grep -qF -- 'CF_EXTRA_HOST_IPS='; then
     return
   fi
   local ips
