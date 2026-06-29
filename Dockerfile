@@ -21,12 +21,32 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     openssl \
     && rm -rf /var/lib/apt/lists/*
 
+# ---- install qemu dependencies ----
+# Kept above the cuttlefish-base layer so base.deb version bumps don't
+# invalidate this layer. qemu-system stays for the qemu_cli path until
+# cvd-host packages start bundling a per-arch qemu binary.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    qemu-system \
+    libpulse0 \
+    libasound2t64 \
+    libgbm1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# ---- install gpu accel related ----
+# TODO: not working yet ...
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    mesa-utils \
+    mesa-vulkan-drivers \
+    libgl1-mesa-dri \
+    libegl1 \
+    && rm -rf /var/lib/apt/lists/*
+
 # --- Install cuttlefish-base (and cuttlefish-user on apt path).
 # Default for amd64/arm64 is the official apt repo. riscv64 has no upstream
 # apt repo; it pulls a pinned .deb from the fork's GitHub releases instead.
-ARG CF_VERSION=1.53.0
-ARG CF_RISCV64_VERSION=1.50.0
-ARG CF_RISCV64_TAG=v${CF_RISCV64_VERSION}-riscv64-260506
+ARG CF_VERSION=1.54.0
+ARG CF_RISCV64_VERSION=1.54.0
+ARG CF_RISCV64_TAG=cf-k3-v1.1
 ARG CF_LOCAL_BASE_DEB=.cuttlefish-base.placeholder
 COPY ${CF_LOCAL_BASE_DEB} /tmp/cuttlefish-base.local.deb
 RUN ARCH=$(dpkg --print-architecture) && \
@@ -50,23 +70,6 @@ RUN ARCH=$(dpkg --print-architecture) && \
       && rm -f /tmp/cuttlefish-base.deb; \
     fi \
     && rm -f /tmp/cuttlefish-base.local.deb \
-    && rm -rf /var/lib/apt/lists/*
-
-# ---- install qemu dependencies ----
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    qemu-system \
-    libpulse0 \
-    libasound2t64 \
-    libgbm1 \
-    && rm -rf /var/lib/apt/lists/*
-
-# ---- install gpu accel related ---- 
-# TODO: not working yet ...
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    mesa-utils \
-    mesa-vulkan-drivers \
-    libgl1-mesa-dri \
-    libegl1 \
     && rm -rf /var/lib/apt/lists/*
 
 # ---- Runtime layout ----
