@@ -22,11 +22,13 @@ Thus this project was born.  And it expanded.
 See host/guest support matrix below.
 Same-arch host/guest defaults to crosvm (qemu selectable via flag); cross-arch is qemu only.
 
-  | Host\Guest | x86_64| arm64  | riscv64 |
+  | Host\Guest | x86_64 | arm64 | riscv64 |
   | -------- | ------- | ------- | ------- |
-  | x86_64     | crosvm: supported, verified<br>qemu: supported, verified  | qemu: supported, verified  | qemu: supported, verified |
-  | arm64     | qemu: unknown | crosvm: supported, unverified<br>qemu: unknown  | qemu: unknown |
-  | riscv64    | qemu: unsupported | qemu: unsupported  | crosvm: supported, verified<br>qemu: unsupported |
+  | x86_64  | crosvm ✓<br>qemu ✓ | qemu ✓ | qemu ✓ |
+  | arm64   | qemu ❓ | crosvm ⚠<br>qemu ❓ | qemu ❓ |
+  | riscv64 | qemu ✗ | qemu ✗ | crosvm ✓<br>qemu ✗ |
+
+  Legend: ✓ verified · ⚠ supported but unverified · ❓ unknown · ✗ unsupported
 
 ## Usage
 4 steps to use the container:
