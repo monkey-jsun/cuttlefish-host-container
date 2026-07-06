@@ -15,6 +15,7 @@ main() {
   check_already_running
   check_vm_manager
   auto_set_extra_host_ips
+  ensure_kvm
 
   mkdir -p "$CF_ROOT_HOST"
   CF_ROOT_HOST=$(readlink -f $CF_ROOT_HOST)
@@ -181,6 +182,22 @@ check_vm_manager() {
 
   echo "[cf-run] CF_VM_MANAGER : $detected (auto-detected)"
   FORWARD_ARGS+=(--env="CF_VM_MANAGER=$detected")
+}
+
+# /dev/kvm may be absent right after boot if KVM is a module and nothing has
+# loaded it yet. Try once with passwordless sudo; failure is non-fatal so this
+# stays safe on hosts without sudo access — crosvm's own "no enabled hypervisor"
+# error will surface next if kvm still isn't there.
+ensure_kvm() {
+  [[ -e /dev/kvm ]] && return
+  echo "[cf-run] /dev/kvm missing, trying: sudo -n modprobe kvm"
+  sudo -n modprobe kvm 2>/dev/null || true
+  if [[ -e /dev/kvm ]]; then
+    echo "[cf-run] /dev/kvm now present"
+  else
+    echo "[cf-run] WARNING: /dev/kvm still missing. If crosvm exits with"
+    echo "[cf-run]          'no enabled hypervisor', run: sudo modprobe kvm"
+  fi
 }
 
 # Enumerate host IPs reachable from outside the container netns and feed
