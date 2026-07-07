@@ -4,6 +4,18 @@ FROM ubuntu:24.04
 ENV DEBIAN_FRONTEND=noninteractive
 ENV TERM=xterm-256color
 
+# Optional Ubuntu ports mirror override. Pass
+# --build-arg APT_MIRROR=<host>[/<path>] (no scheme) to redirect apt when
+# ports.ubuntu.com is slow or blocked. The rewrite leaves ubuntu.sources'
+# URL scheme untouched (http by default), so it applies before
+# ca-certificates lands; apt's GPG-signed InRelease covers integrity.
+# Empty default is a no-op.
+ARG APT_MIRROR=
+RUN if [ -n "${APT_MIRROR}" ]; then \
+      sed -Ei "s|ports\.ubuntu\.com(/ubuntu-ports)?|${APT_MIRROR}|g" \
+        /etc/apt/sources.list.d/ubuntu.sources; \
+    fi
+
 # ---- Base OS deps ----
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
