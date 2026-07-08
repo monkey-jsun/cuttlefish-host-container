@@ -1,0 +1,122 @@
+# Cuttlefish host container for SpaceMiT K3 (bianbu base + PowerVR GPU).
+#
+# The bianbu:24.04 base is not on Docker Hub. Import it locally first:
+#   wget https://archive.spacemit.com/bianbu-base/bianbu-base-24.04-base-riscv64.tar.gz
+#   docker import bianbu-base-24.04-base-riscv64.tar.gz bianbu:24.04
+#
+# Kept separate from the generic Dockerfile because bianbu4's apt archive
+# ships the proprietary Imagination userspace (img-gpu-powervr) and
+# PVR-integrated mesa needed to unlock gfxstream. The generic Dockerfile
+# stays on stock ubuntu:24.04.
+FROM bianbu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TERM=xterm-256color
+
+# The bianbu:24.04 base tarball pins apt to bianbu/noble/snapshots/v2.2,
+# which ships an older img-gpu-powervr build (bb3) that mismatches the current
+# pvrsrvkm module ABI. Point apt at the bianbu4 archive on the resolute
+# rolling suite so PVR userspace tracks the kernel module.
+RUN sed -i -E \
+      -e "s|^URIs:.*|URIs: https://archive.spacemit.com/bianbu4/|" \
+      -e "s|^Suites:.*|Suites: resolute resolute-security resolute-updates resolute-backports resolute-porting resolute-customization|" \
+      /etc/apt/sources.list.d/*.sources
+
+# Bianbu-forked mesa (24.01bbN, ships pvr_dri.so) coexists with stock Ubuntu
+# mesa (26.0.3) in the same suite; without pinning apt picks the higher
+# version and drops PVR support. Mirror the host's /etc/apt/preferences.d/bianbu.
+RUN cat > /etc/apt/preferences.d/bianbu <<'EOF'
+Package: *
+Pin: release o=Bianbu, n=resolute-porting
+Pin-Priority: 1100
+
+Package: *
+Pin: release o=Bianbu, n=resolute-customization
+Pin-Priority: 1100
+
+Package: *
+Pin: release o=Spacemit, n=unstable
+Pin-Priority: 1200
+EOF
+
+# ---- Base OS deps ----
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    gnupg \
+    unzip \
+    iproute2 \
+    iptables \
+    iputils-ping \
+    net-tools \
+    dnsmasq-base \
+    socat \
+    python3 \
+    python3-aiohttp \
+    openssl \
+    && rm -rf /var/lib/apt/lists/*
+
+# ---- install qemu dependencies ----
+# Kept above the cuttlefish-base layer so base.deb version bumps don't
+# invalidate this layer. qemu-system stays for the qemu_cli path until
+# cvd-host packages start bundling a per-arch qemu binary.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    qemu-system \
+    libpulse0 \
+    libasound2t64 \
+    libgbm1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# ---- K3 GPU userspace: PowerVR proprietary stack + GLVND + Vulkan loader ----
+# gfxstream_graphics_detector requires host-side EGL/GLES + Vulkan to promote
+# gpu_mode past guest_swiftshader. img-gpu-powervr ships libVK_IMG.so,
+# libGLESv{1,2}_PVR_MESA.so, and powervr_icd.json; mesa-vulkan-drivers gives
+# lavapipe as a software Vulkan fallback for cases where PVR init fails.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    img-gpu-powervr \
+    libvulkan1 \
+    libglvnd0 \
+    libgl1 \
+    libgles1 \
+    libgles2 \
+    libegl1 \
+    libgl1-mesa-dri \
+    libegl-mesa0 \
+    libglx-mesa0 \
+    libglapi-mesa \
+    mesa-vulkan-drivers \
+    mesa-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+# --- Install cuttlefish-base.
+# riscv64 has no upstream apt repo; pull a pinned .deb from the fork's GitHub
+# releases when no local .deb is provided (via cf-build.sh -d).
+ARG CF_RISCV64_VERSION=1.54.0
+ARG CF_RISCV64_TAG=cf-k3-v1.1
+ARG CF_LOCAL_BASE_DEB=.cuttlefish-base.placeholder
+COPY ${CF_LOCAL_BASE_DEB} /tmp/cuttlefish-base.local.deb
+RUN ARCH=$(dpkg --print-architecture) && \
+    if [ -s /tmp/cuttlefish-base.local.deb ]; then \
+      apt-get update \
+      && apt-get install -y --no-install-recommends /tmp/cuttlefish-base.local.deb; \
+    else \
+      curl -fsSL -o /tmp/cuttlefish-base.deb \
+        https://github.com/monkey-jsun/android-cuttlefish/releases/download/${CF_RISCV64_TAG}/cuttlefish-base_${CF_RISCV64_VERSION}_${ARCH}.deb \
+      && apt-get update \
+      && apt-get install -y --no-install-recommends /tmp/cuttlefish-base.deb \
+      && rm -f /tmp/cuttlefish-base.deb; \
+    fi \
+    && rm -f /tmp/cuttlefish-base.local.deb \
+    && rm -rf /var/lib/apt/lists/*
+
+# ---- Runtime layout ----
+WORKDIR /cf
+
+# ---- Entrypoint ----
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY webrtc_operator_shim.py /usr/local/bin/webrtc_operator_shim.py
+RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/webrtc_operator_shim.py
+
+# WebRTC signaling (instance 1) + VNC (instance 1) + ADB TCP (instance 1)
+EXPOSE 8443 5900 6520
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

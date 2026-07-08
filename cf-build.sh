@@ -4,6 +4,7 @@ set -euo pipefail
 IMAGE_NAME="cf-host"
 DEB_PATH=""
 APT_MIRROR=""
+DOCKERFILE=""
 STAGED_DEB=".cuttlefish-base.local.deb"
 
 usage() {
@@ -19,13 +20,19 @@ Options:
                         releases. Works on any arch.
       --apt-mirror URL  Ubuntu ports mirror (host+path, no scheme) to
                         substitute for ports.ubuntu.com. Use when the stock
-                        mirror is slow or blocked (e.g. from mainland China).
+                        mirror is slow or blocked in some regions.
                         Example: mirrors.aliyun.com/ubuntu-ports
+  -f, --file PATH       Dockerfile to build. Default: Dockerfile.bianbu-k3
+                        on bianbu hosts (auto-detected via /etc/os-release),
+                        Dockerfile everywhere else.
   -h, --help            Show this help
 
 Examples:
-  # Default build
+  # Default build (auto-picks Dockerfile.bianbu-k3 on K3, Dockerfile elsewhere)
   $(basename "$0")
+
+  # Force the generic Dockerfile on a bianbu host
+  $(basename "$0") -f Dockerfile
 
   # Build with a custom image name
   $(basename "$0") -i my-cf-host
@@ -33,7 +40,7 @@ Examples:
   # Build using a locally built cuttlefish-base .deb
   $(basename "$0") -d ~/work/cuttlefish/cuttlefish-base_1.50.0_riscv64.deb
 
-  # Build from mainland China via a domestic ubuntu-ports mirror
+  # Build via a domestic ubuntu-ports mirror
   $(basename "$0") --apt-mirror mirrors.aliyun.com/ubuntu-ports
 EOF
 }
@@ -43,6 +50,7 @@ while [[ $# -gt 0 ]]; do
     -i|--image)     IMAGE_NAME="$2"; shift 2 ;;
     -d|--deb)       DEB_PATH="$2"; shift 2 ;;
     --apt-mirror)   APT_MIRROR="$2"; shift 2 ;;
+    -f|--file)      DOCKERFILE="$2"; shift 2 ;;
     -h|--help)      usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage; exit 1 ;;
   esac
@@ -51,6 +59,22 @@ done
 # Resolve build context to the script's own directory so cf-build.sh can be
 # invoked from anywhere (e.g. from an instance subdir like cf-k3-v1.1/).
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Auto-select the K3 variant when both signals fire: bianbu OS and
+# spacemit,k3 device-tree compatible.
+if [[ -z "$DOCKERFILE" ]]; then
+  if grep -q '^ID=bianbu\b' /etc/os-release 2>/dev/null \
+     && grep -q 'spacemit,k3' /proc/device-tree/compatible 2>/dev/null; then
+    DOCKERFILE="Dockerfile.bianbu-k3"
+    echo "[cf-build] Detected bianbu on K3; using $DOCKERFILE (override with -f)"
+  else
+    DOCKERFILE="Dockerfile"
+  fi
+fi
+if [[ ! -f "$SCRIPT_DIR/$DOCKERFILE" ]]; then
+  echo "[cf-build] Dockerfile not found: $SCRIPT_DIR/$DOCKERFILE" >&2
+  exit 1
+fi
 
 BUILD_ARGS=()
 if [[ -n "$DEB_PATH" ]]; then
@@ -70,6 +94,6 @@ if [[ -n "$APT_MIRROR" ]]; then
   BUILD_ARGS+=(--build-arg "APT_MIRROR=$APT_MIRROR")
 fi
 
-echo "[cf-build] Building image: $IMAGE_NAME"
-docker build "${BUILD_ARGS[@]}" -t "$IMAGE_NAME" "$SCRIPT_DIR"
+echo "[cf-build] Building image: $IMAGE_NAME (from $DOCKERFILE)"
+docker build "${BUILD_ARGS[@]}" -f "$SCRIPT_DIR/$DOCKERFILE" -t "$IMAGE_NAME" "$SCRIPT_DIR"
 echo "[cf-build] Done."
