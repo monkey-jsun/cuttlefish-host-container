@@ -75,6 +75,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN apt-get update && apt-get install -y --no-install-recommends \
     img-gpu-powervr \
     libvulkan1 \
+    libvirglrenderer1 \
     libglvnd0 \
     libgl1 \
     libgles1 \
