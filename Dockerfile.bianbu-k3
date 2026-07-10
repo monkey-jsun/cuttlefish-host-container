@@ -110,6 +110,12 @@ RUN ARCH=$(dpkg --print-architecture) && \
     && rm -f /tmp/cuttlefish-base.local.deb \
     && rm -rf /var/lib/apt/lists/*
 
+# cuttlefish-base ships libgfxstream_backend.so at /usr/lib/cuttlefish-common/bin,
+# outside the default linker search path. crosvm built with the gfxstream feature
+# has it as DT_NEEDED and would exit at startup otherwise.
+RUN echo "/usr/lib/cuttlefish-common/bin" > /etc/ld.so.conf.d/cuttlefish-common.conf \
+    && ldconfig
+
 # ---- Runtime layout ----
 WORKDIR /cf
 
