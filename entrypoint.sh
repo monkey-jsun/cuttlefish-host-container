@@ -1,12 +1,63 @@
 #!/bin/bash
 set -euo pipefail
 
+CF_ROOT=/cf
+CF_HOST_DIR="$CF_ROOT/host"
+CF_PRODUCT_DIR="$CF_ROOT/product"
+CF_INSTANCE_DIR="$CF_ROOT/instance"
+
 # Tunables (can be overridden via -e on docker run)
 : "${CF_MODE:=run}"                # "init" or "run"
 : "${CF_CPUS:=4}"
 : "${CF_MEM_MB:=8192}"
 : "${CF_GPU_MODE:=auto}"
-: "${CF_VM_MANAGER:=qemu_cli}"
+
+# Echo normalized host arch.
+detect_host_arch() {
+  local arch
+  arch=$(uname -m)
+  case "$arch" in
+    arm64) echo "aarch64" ;;
+    amd64) echo "x86_64" ;;
+    *)     echo "$arch" ;;
+  esac
+}
+
+# Echo guest arch from boot.img's kernel, or return 1.
+detect_guest_arch() {
+  local bootimg="$CF_PRODUCT_DIR/boot.img"
+  [[ -f "$bootimg" ]] || return 1
+  command -v file >/dev/null 2>&1 || return 1
+  local ksize tmp info
+  ksize=$(od -An -tu4 -N4 -j8 --endian=little "$bootimg" 2>/dev/null | tr -d ' ')
+  [[ -n "$ksize" && "$ksize" -gt 0 && "$ksize" -lt 1000000000 ]] || return 1
+  tmp=$(mktemp /tmp/cf-kernel.XXXXXX)
+  dd if="$bootimg" of="$tmp" bs=4096 skip=1 count=$((ksize / 4096 + 2)) status=none 2>/dev/null
+  info=$(file -L "$tmp" 2>/dev/null)
+  rm -f "$tmp"
+  case "$info" in
+    *"x86 boot"*|*x86-64*|*x86_64*) echo "x86_64" ;;
+    *aarch64*|*ARM64*)              echo "aarch64" ;;
+    *RISC-V*|*riscv64*)             echo "riscv64" ;;
+    *)                              return 1 ;;
+  esac
+}
+
+# crosvm needs the host and guest arch to match; qemu_cli emulates. cf-run.sh
+# normally passes CF_VM_MANAGER, so this only fires on a direct docker run.
+if [[ -z "${CF_VM_MANAGER:-}" ]]; then
+  guest_arch=$(detect_guest_arch) || guest_arch=""
+  if [[ -z "$guest_arch" ]]; then
+    echo "[cf] WARNING: cannot read guest arch from $CF_PRODUCT_DIR/boot.img;"
+    echo "[cf]          using qemu_cli.  Set CF_VM_MANAGER to override."
+    CF_VM_MANAGER=qemu_cli
+  elif [[ "$(detect_host_arch)" == "$guest_arch" ]]; then
+    CF_VM_MANAGER=crosvm
+  else
+    CF_VM_MANAGER=qemu_cli
+  fi
+  echo "[cf] CF_VM_MANAGER = $CF_VM_MANAGER (auto-detected)"
+fi
 
 # CF_START_WEBRTC is derived from CF_VM_MANAGER. The source enforces the
 # pairing (crosvm with WebRTC, qemu_cli with VNC); other combinations are
@@ -16,11 +67,6 @@ if [[ "$CF_VM_MANAGER" == "crosvm" ]]; then
 else
   CF_START_WEBRTC=false
 fi
-
-CF_ROOT=/cf
-CF_HOST_DIR="$CF_ROOT/host"
-CF_PRODUCT_DIR="$CF_ROOT/product"
-CF_INSTANCE_DIR="$CF_ROOT/instance"
 
 # -------- Run mode below --------
 

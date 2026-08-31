@@ -20,6 +20,7 @@ RUN if [ -n "${APT_MIRROR}" ]; then \
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
+    file \
     gnupg \
     unzip \
     iproute2 \
