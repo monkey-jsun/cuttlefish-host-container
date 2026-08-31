@@ -12,8 +12,8 @@ Usage: $(basename "$0") [options]
 Initialize / update Cuttlefish host + product artifacts in a persistent volume.
 
 Options:
-  -H, --host PATH       Path to cvd-host_package-*.tar.gz (optional)
-  -P, --product PATH    Path to aosp_cf_*_img-*.zip (optional)
+  -H, --host SRC        Path or URL to cvd-host_package-*.tar.gz (optional)
+  -P, --product SRC     Path or URL to aosp_cf_*_img-*.zip (optional)
   -r, --root DIR        Host directory to use as /cf inside container (default: ./cf-data)
   -h, --help            Show this help
 
@@ -50,28 +50,59 @@ CF_INSTANCE_DIR="$CF_ROOT/instance"
 
 mkdir -p "$CF_HOST_DIR" "$CF_PRODUCT_DIR" "$CF_INSTANCE_DIR"
 
+# A progress bar redraws with \r, which a log file renders as one endless line.
+if [ -t 2 ]; then CURL_PROGRESS=(--progress-bar); else CURL_PROGRESS=(-sS); fi
+
 # check host package
 if [[ -n "$HOST_TAR" ]]; then
-  if [[ ! -f "$HOST_TAR" ]]; then
-    echo "Host tar not found: $HOST_TAR" >&2
-    exit 1
-  fi
-  
-  echo "Unpacking host package into $CF_HOST_DIR ..."
-  rm -rf "${CF_HOST_DIR:?}"/*
-  tar -xf $HOST_TAR -C "$CF_HOST_DIR"
+  case "$HOST_TAR" in
+    http://*|https://*)
+      echo "Fetching host package from $HOST_TAR ..."
+      rm -rf "${CF_HOST_DIR:?}"/*
+      if ! curl -fL "${CURL_PROGRESS[@]}" "$HOST_TAR" | tar -xzf - -C "$CF_HOST_DIR"; then
+        echo "Could not fetch or unpack $HOST_TAR" >&2
+        exit 1
+      fi
+      ;;
+    *)
+      if [[ ! -f "$HOST_TAR" ]]; then
+        echo "Host tar not found: $HOST_TAR" >&2
+        exit 1
+      fi
+
+      echo "Unpacking host package into $CF_HOST_DIR ..."
+      rm -rf "${CF_HOST_DIR:?}"/*
+      tar -xf "$HOST_TAR" -C "$CF_HOST_DIR"
+      ;;
+  esac
 fi
 
 # check product image file
 if [[ -n "$PRODUCT_ZIP" ]]; then
-  if [[ ! -f "$PRODUCT_ZIP" ]]; then
-    echo "Product zip not found: $PRODUCT_ZIP" >&2
-    exit 1
-  fi
+  case "$PRODUCT_ZIP" in
+    http://*|https://*)
+      echo "Fetching product images from $PRODUCT_ZIP ..."
+      rm -rf "${CF_PRODUCT_DIR:?}"/*
+      zip="$CF_ROOT/.cf-product.zip"
+      if ! curl -fL "${CURL_PROGRESS[@]}" -o "$zip" "$PRODUCT_ZIP"; then
+        echo "Could not fetch $PRODUCT_ZIP" >&2
+        rm -f "$zip"
+        exit 1
+      fi
+      unzip -n "$zip" -d "$CF_PRODUCT_DIR"
+      rm -f "$zip"
+      ;;
+    *)
+      if [[ ! -f "$PRODUCT_ZIP" ]]; then
+        echo "Product zip not found: $PRODUCT_ZIP" >&2
+        exit 1
+      fi
 
-  echo "Unpacking product images into $CF_PRODUCT_DIR ..."
-  rm -rf "${CF_PRODUCT_DIR:?}"/*
-  unzip -n $PRODUCT_ZIP -d "$CF_PRODUCT_DIR"
+      echo "Unpacking product images into $CF_PRODUCT_DIR ..."
+      rm -rf "${CF_PRODUCT_DIR:?}"/*
+      unzip -n "$PRODUCT_ZIP" -d "$CF_PRODUCT_DIR"
+      ;;
+  esac
 fi
 
 echo "[cf-init] Done."

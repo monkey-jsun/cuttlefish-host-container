@@ -12,6 +12,57 @@ CF_INSTANCE_DIR="$CF_ROOT/instance"
 : "${CF_MEM_MB:=8192}"
 : "${CF_GPU_MODE:=auto}"
 
+# URLs baked in at build time by cf-build.sh -H/-P; empty otherwise.
+: "${CF_HOST_PACKAGE_URL:=}"
+: "${CF_PRODUCT_IMG_URL:=}"
+
+mkdir -p "$CF_HOST_DIR" "$CF_PRODUCT_DIR" "$CF_INSTANCE_DIR"
+
+# A progress bar redraws with \r, which a log file renders as one endless line.
+if [ -t 2 ]; then CURL_PROGRESS=(--progress-bar); else CURL_PROGRESS=(-sS); fi
+
+# 1) Host tools
+if [[ ! -x "$CF_HOST_DIR/bin/launch_cvd" ]]; then
+  if [[ -n "$CF_HOST_PACKAGE_URL" ]]; then
+    echo "[cf] Fetching host package from $CF_HOST_PACKAGE_URL"
+    rm -rf "${CF_HOST_DIR:?}"/*
+    if ! curl -fL "${CURL_PROGRESS[@]}" "$CF_HOST_PACKAGE_URL" | tar -xzf - -C "$CF_HOST_DIR"; then
+      echo "[cf] ERROR: could not fetch or unpack $CF_HOST_PACKAGE_URL"
+      exit 1
+    fi
+    echo "[cf] Host package unpacked into $CF_HOST_DIR"
+  else
+    echo "[cf] ERROR: host tools not found in $CF_HOST_DIR."
+    echo "[cf]        Expected $CF_HOST_DIR/bin/launch_cvd to exist."
+    echo "[cf]        Run init first, for example:"
+    echo "[cf]            cf-init.sh -H /path/to/cvd-host_package-x86_64.tar.gz"
+    exit 1
+  fi
+fi
+
+# 2) Product images
+if ! compgen -G "$CF_PRODUCT_DIR/*.img" > /dev/null \
+   && [[ ! -f "$CF_PRODUCT_DIR/android-info.txt" ]]; then
+  if [[ -n "$CF_PRODUCT_IMG_URL" ]]; then
+    echo "[cf] Fetching product images from $CF_PRODUCT_IMG_URL"
+    rm -rf "${CF_PRODUCT_DIR:?}"/*
+    zip="$CF_ROOT/.cf-product.zip"
+    if ! curl -fL "${CURL_PROGRESS[@]}" -o "$zip" "$CF_PRODUCT_IMG_URL"; then
+      echo "[cf] ERROR: could not fetch $CF_PRODUCT_IMG_URL"
+      rm -f "$zip"
+      exit 1
+    fi
+    unzip -n -q "$zip" -d "$CF_PRODUCT_DIR"
+    rm -f "$zip"
+    echo "[cf] Product images unpacked into $CF_PRODUCT_DIR"
+  else
+    echo "[cf] ERROR: product images not found in $CF_PRODUCT_DIR."
+    echo "[cf]        Run init with a product zip, for example:"
+    echo "[cf]            cf-init.sh -P /path/to/aosp_cf_riscv64_phone-img-XXXX.zip"
+    exit 1
+  fi
+fi
+
 # Echo normalized host arch.
 detect_host_arch() {
   local arch
@@ -69,24 +120,6 @@ else
 fi
 
 # -------- Run mode below --------
-
-# 1) Sanity-check host tools
-if [[ ! -x "$CF_HOST_DIR/bin/launch_cvd" ]]; then
-  echo "[cf] ERROR: host tools not found in $CF_HOST_DIR."
-  echo "[cf]        Expected $CF_HOST_DIR/bin/launch_cvd to exist."
-  echo "[cf]        Run init first, for example:"
-  echo "[cf]            cf-init.sh -P /path/to/cvd-host_package-x86_64.tar.gz"
-  exit 1
-fi
-
-# 2) Sanity-check product images
-if ! compgen -G "$CF_PRODUCT_DIR/*.img" > /dev/null \
-   && [[ ! -f "$CF_PRODUCT_DIR/android-info.txt" ]]; then
-  echo "[cf] ERROR: product images not found in $CF_PRODUCT_DIR."
-  echo "[cf]        Run init with a product zip, for example:"
-  echo "[cf]            cf-init.sh -P /path/to/aosp_cf_riscv64_phone-img-XXXX.zip"
-  exit 1
-fi
 
 # Ensure host tools are reachable
 #ln -sf "$CF_HOST_DIR"/bin/* /usr/local/bin/ || true

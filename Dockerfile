@@ -93,6 +93,13 @@ COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY webrtc_operator_shim.py /usr/local/bin/webrtc_operator_shim.py
 RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/webrtc_operator_shim.py
 
+# Sources entrypoint.sh fetches from when /cf/host or /cf/product is empty.
+# Empty unless cf-build.sh was given -H / -P.
+ARG CF_HOST_PACKAGE_URL=
+ARG CF_PRODUCT_IMG_URL=
+ENV CF_HOST_PACKAGE_URL=${CF_HOST_PACKAGE_URL} \
+    CF_PRODUCT_IMG_URL=${CF_PRODUCT_IMG_URL}
+
 # WebRTC signaling (instance 1) + VNC (instance 1) + ADB TCP (instance 1)
 EXPOSE 8443 5900 6520
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
