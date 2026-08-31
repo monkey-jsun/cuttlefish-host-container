@@ -33,6 +33,14 @@ if [[ -z "$CONTAINER_ID" ]]; then
   exit 1
 fi
 
+# stop_cvd kills crosvm without shutting Android down, so unflushed guest
+# writes never reach overlay.img. Best-effort; must not block the stop.
+echo "[cf-stop] Flushing guest filesystem ..."
+docker exec "$CONTAINER_ID" env \
+  PATH=/cf/host/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+  timeout 30 sh -c 'adb connect 127.0.0.1:6520 >/dev/null 2>&1; adb shell sync' \
+  >/dev/null 2>&1 || echo "[cf-stop] guest flush skipped (adb unreachable)"
+
 echo "[cf-stop] Stopping CVD in container $CONTAINER_ID ..."
 # Try graceful in-guest shutdown via stop_cvd. May fail (e.g. launcher
 # monitor unresponsive); don't trip set -e here.
