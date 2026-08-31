@@ -36,22 +36,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # ---- install qemu dependencies ----
 # Kept above the cuttlefish-base layer so base.deb version bumps don't
-# invalidate this layer. qemu-system stays for the qemu_cli path until
-# cvd-host packages start bundling a per-arch qemu binary.
+# invalidate this layer. Only the guest architectures cuttlefish targets are
+# installed; the qemu-system metapackage pulls an emulator for every
+# architecture Debian ships.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    qemu-system \
+    qemu-system-misc \
+    qemu-system-x86 \
+    qemu-system-arm \
     libpulse0 \
     libasound2t64 \
     libgbm1 \
-    && rm -rf /var/lib/apt/lists/*
-
-# ---- install gpu accel related ----
-# TODO: not working yet ...
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    mesa-utils \
-    mesa-vulkan-drivers \
-    libgl1-mesa-dri \
-    libegl1 \
     && rm -rf /var/lib/apt/lists/*
 
 # --- Install cuttlefish-base (and cuttlefish-user on apt path).
