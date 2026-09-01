@@ -5,8 +5,6 @@ IMAGE_NAME="cf-host"
 DEB_PATH=""
 APT_MIRROR=""
 DOCKERFILE=""
-HOST_URL=""
-PRODUCT_URL=""
 STAGED_DEB=".cuttlefish-base.local.deb"
 
 usage() {
@@ -17,11 +15,6 @@ Build the Cuttlefish host container image.
 
 Options:
   -i, --image NAME      Docker image name (default: $IMAGE_NAME)
-  -H, --host URL        URL of a cvd-host_package-*.tar.gz. Baked into the
-                        image; the container fetches it on first run when
-                        /cf/host is empty.
-  -P, --product URL     URL of an aosp_cf_*-img-*.zip, same behaviour for
-                        /cf/product.
   -d, --deb PATH        Path to a local cuttlefish-base .deb to install
                         in the image instead of fetching from apt / GitHub
                         releases. Works on any arch.
@@ -53,8 +46,6 @@ EOF
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -i|--image)     IMAGE_NAME="$2"; shift 2 ;;
-    -H|--host)      HOST_URL="$2"; shift 2 ;;
-    -P|--product)   PRODUCT_URL="$2"; shift 2 ;;
     -d|--deb)       DEB_PATH="$2"; shift 2 ;;
     --apt-mirror)   APT_MIRROR="$2"; shift 2 ;;
     -f|--file)      DOCKERFILE="$2"; shift 2 ;;
@@ -89,27 +80,6 @@ fi
 if [[ -n "$APT_MIRROR" ]]; then
   echo "[cf-build] Using apt mirror: $APT_MIRROR"
   BUILD_ARGS+=(--build-arg "APT_MIRROR=$APT_MIRROR")
-fi
-for spec in "host:$HOST_URL" "product:$PRODUCT_URL"; do
-  kind="${spec%%:*}"
-  url="${spec#*:}"
-  [[ -n "$url" ]] || continue
-  case "$url" in
-    http://*|https://*) ;;
-    *)
-      echo "[cf-build] --$kind takes a URL, not a path: $url" >&2
-      echo "[cf-build] A local file would have to be shipped inside the image." >&2
-      exit 1
-      ;;
-  esac
-done
-if [[ -n "$HOST_URL" ]]; then
-  echo "[cf-build] Baking host package URL: $HOST_URL"
-  BUILD_ARGS+=(--build-arg "CF_HOST_PACKAGE_URL=$HOST_URL")
-fi
-if [[ -n "$PRODUCT_URL" ]]; then
-  echo "[cf-build] Baking product image URL: $PRODUCT_URL"
-  BUILD_ARGS+=(--build-arg "CF_PRODUCT_IMG_URL=$PRODUCT_URL")
 fi
 
 echo "[cf-build] Building image: $IMAGE_NAME (from $DOCKERFILE)"

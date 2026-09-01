@@ -79,27 +79,33 @@ Additional notes:
   * However, you can only run 1 of them at any time due to port conflict.
 * ADB, VNC ports are visible to host LAN.  So you can run it on a headless server.
 
-## Self-provisioning images
+## Fetching artifacts at run time
 
-An image built with `-H`/`-P` records those URLs.  When it starts with an empty
-`/cf`, it fetches and unpacks them instead of exiting, so the image runs without
-`cf-init.sh`:
+`entrypoint.sh` populates `/cf` itself when it is empty and it knows where to
+fetch from, so an instance can start without running `cf-init.sh`:
 
 ```
-./cf-build.sh -i cf-host-baked \
-  -H https://example.com/cvd-host_package_riscv64.tar.gz \
-  -P https://example.com/aosp_cf_riscv64_phone-img.zip
-
 docker run -it --rm --privileged --ulimit nofile=65536:65536 \
   -p 8443:8443 -p 5900:5900 -p 6520:6520 \
   -p 15550-15599:15550-15599/udp \
   -v "$PWD/cf-data:/cf" \
-  cf-host-baked
+  -e CF_HOST_PACKAGE_URL=https://example.com/cvd-host_package_riscv64.tar.gz \
+  -e CF_PRODUCT_IMG_URL=https://example.com/aosp_cf_riscv64_phone-img.zip \
+  cf-host
 ```
 
 Host and product are fetched independently, so a partly populated `/cf` is
-completed rather than rebuilt.  Override either source at run time with
-`-e CF_HOST_PACKAGE_URL=...` or `-e CF_PRODUCT_IMG_URL=...`.
+completed rather than rebuilt.  Neither variable set and `/cf` empty is an
+error, as before.
+
+To ship an image that carries its own sources and needs no `-e`, add the two
+variables in a downstream image:
+
+```
+FROM cf-host
+ENV CF_HOST_PACKAGE_URL=... \
+    CF_PRODUCT_IMG_URL=...
+```
 
 A browser on the Docker host works as-is.  A browser elsewhere needs
 `-e CF_EXTRA_HOST_IPS=<host-lan-ip>` — the container sees only its own veth
