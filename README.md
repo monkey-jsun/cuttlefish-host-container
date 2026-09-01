@@ -46,6 +46,10 @@ Below is a sample execution sequence on x86_64 host.
 
 ./cf-init.sh -P aosp_cf_x86_64_only_phone-img-14421689.zip -H cvd-host_package.tar.gz
 
+# -H and -P also take URLs
+./cf-init.sh -P https://example.com/aosp_cf_riscv64_phone-img.zip \
+             -H https://example.com/cvd-host_package_riscv64.tar.gz
+
 # run with default crosvm
 ./cf-run.sh
 firefox https://localhost:8443
@@ -75,8 +79,35 @@ Additional notes:
   * However, you can only run 1 of them at any time due to port conflict.
 * ADB, VNC ports are visible to host LAN.  So you can run it on a headless server.
 
+## Self-provisioning images
+
+An image built with `-H`/`-P` records those URLs.  When it starts with an empty
+`/cf`, it fetches and unpacks them instead of exiting, so the image runs without
+`cf-init.sh`:
+
+```
+./cf-build.sh -i cf-host-baked \
+  -H https://example.com/cvd-host_package_riscv64.tar.gz \
+  -P https://example.com/aosp_cf_riscv64_phone-img.zip
+
+docker run -it --rm --privileged --ulimit nofile=65536:65536 \
+  -p 8443:8443 -p 5900:5900 -p 6520:6520 \
+  -p 15550-15599:15550-15599/udp \
+  -v "$PWD/cf-data:/cf" \
+  cf-host-baked
+```
+
+Host and product are fetched independently, so a partly populated `/cf` is
+completed rather than rebuilt.  Override either source at run time with
+`-e CF_HOST_PACKAGE_URL=...` or `-e CF_PRODUCT_IMG_URL=...`.
+
+A browser on the Docker host works as-is.  A browser elsewhere needs
+`-e CF_EXTRA_HOST_IPS=<host-lan-ip>` — the container sees only its own veth
+address and cannot discover the host's.
+
 ## TODO
-* GPU acceleration does not work yet
+* The generic image ships no GPU stack; gpu_mode resolves to guest_swiftshader.
+  GPU support is host-specific -- see Dockerfile.bianbu-k3.
 
 ## Networking
 
