@@ -53,7 +53,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # apt repo; it pulls a pinned .deb from the fork's GitHub releases instead.
 ARG CF_VERSION=1.54.0
 ARG CF_RISCV64_VERSION=1.54.0
-ARG CF_RISCV64_TAG=cf-k3-v1.1
+ARG CF_RISCV64_TAG=cf-k3-v1.2
 ARG CF_LOCAL_BASE_DEB=.cuttlefish-base.placeholder
 COPY ${CF_LOCAL_BASE_DEB} /tmp/cuttlefish-base.local.deb
 RUN ARCH=$(dpkg --print-architecture) && \
