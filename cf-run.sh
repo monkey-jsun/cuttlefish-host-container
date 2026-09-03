@@ -57,6 +57,11 @@ main() {
     if [[ -e /dev/kvm ]]; then
       SECURE_ARGS+=" --device /dev/kvm"
     fi
+    # Hardware video encode/decode (Linlon VPU on K3).  The crosvm path gets
+    # this from --privileged; qemu_cli needs it named.
+    if [[ -e /dev/video0 ]]; then
+      SECURE_ARGS+=" --device /dev/video0"
+    fi
     echo "[cf-run] Running qemu_cli, secure args are: $SECURE_ARGS"
   fi
 
