@@ -29,8 +29,11 @@ Examples:
   # Default build
   $(basename "$0")
 
-  # Build the K3/bianbu variant
-  $(basename "$0") -f Dockerfile.bianbu-k3
+  # Build the K3/bianbu variant.  Always give it its own image name: it
+  # carries the proprietary Imagination userspace, so it must never become
+  # the image publish.sh pushes, and keeping both lets you A/B against the
+  # generic one.
+  $(basename "$0") -f Dockerfile.bianbu-k3 -i cf-host-k3
 
   # Build with a custom image name
   $(basename "$0") -i my-cf-host

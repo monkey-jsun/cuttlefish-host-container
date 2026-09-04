@@ -1,13 +1,20 @@
 # Cuttlefish host container for SpaceMiT K3 (bianbu base + PowerVR GPU).
 #
-# The bianbu:24.04 base is not on Docker Hub. Import it locally first:
-#   wget https://archive.spacemit.com/bianbu-base/bianbu-base-24.04-base-riscv64.tar.gz
-#   docker import bianbu-base-24.04-base-riscv64.tar.gz bianbu:24.04
+# The base is not on Docker Hub; import the SpaceMiT rootfs tarball first.
+# Note the tag says 24.04 but the contents are 24.04.1 -- that is what the
+# image on k3-jun actually is, confirmed by diff_id, so the tag is kept and
+# the version is recorded here rather than silently changing it:
+#
+#   URL    https://archive.spacemit.com/bianbu-base/bianbu-base-24.04.1-base-riscv64.tar.gz
+#   sha256 a3f8ca97d8c399c05f8284adad8cc26980e3b7fe63e85026396d29174a9a554c
+#
+#   wget https://archive.spacemit.com/bianbu-base/bianbu-base-24.04.1-base-riscv64.tar.gz
+#   echo "a3f8ca97d8c399c05f8284adad8cc26980e3b7fe63e85026396d29174a9a554c  bianbu-base-24.04.1-base-riscv64.tar.gz" | sha256sum -c
+#   docker import bianbu-base-24.04.1-base-riscv64.tar.gz bianbu:24.04
 #
 # Kept separate from the generic Dockerfile because bianbu4's apt archive
-# ships the proprietary Imagination userspace (img-gpu-powervr) and
-# PVR-integrated mesa needed to unlock gfxstream. The generic Dockerfile
-# stays on stock ubuntu:24.04.
+# ships the proprietary Imagination userspace (img-gpu-powervr) that gfxstream
+# needs. The generic Dockerfile stays on stock ubuntu:24.04.
 FROM bianbu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -22,22 +29,17 @@ RUN sed -i -E \
       -e "s|^Suites:.*|Suites: resolute resolute-security resolute-updates resolute-backports resolute-porting resolute-customization|" \
       /etc/apt/sources.list.d/*.sources
 
-# Bianbu-forked mesa (24.01bbN, ships pvr_dri.so) coexists with stock Ubuntu
-# mesa (26.0.3) in the same suite; without pinning apt picks the higher
-# version and drops PVR support. Mirror the host's /etc/apt/preferences.d/bianbu.
-RUN cat > /etc/apt/preferences.d/bianbu <<'EOF'
-Package: *
-Pin: release o=Bianbu, n=resolute-porting
-Pin-Priority: 1100
-
-Package: *
-Pin: release o=Bianbu, n=resolute-customization
-Pin-Priority: 1100
-
-Package: *
-Pin: release o=Spacemit, n=unstable
-Pin-Priority: 1200
-EOF
+# This used to pin apt to Bianbu's forked mesa (24.01bbN, ships pvr_dri.so),
+# but that fork is no longer in any suite -- only stock 26.0.3 is published,
+# so the pin selected a version that does not exist and the build silently
+# got stock mesa anyway.  Measured 2026-09-04: PowerVR *Vulkan* needs only
+# img-gpu-powervr (libVK_IMG.so + powervr_icd.json); vulkaninfo enumerates
+# the BXM-4-64 with no mesa fork present at all.  So the fork is dropped.
+#
+# It carried pvr_dri.so, the GL/DRI path.  If host GLES is ever required --
+# kHostGlesAvailable gates drm_virgl and plain gfxstream, though not
+# gfxstream_guest_angle -- the fork returns as a problem, and the only known
+# copies are the 24.01bb5 packages installed on k3-jun.
 
 # ---- Base OS deps ----
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -73,8 +75,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # gpu_mode past guest_swiftshader. img-gpu-powervr ships libVK_IMG.so,
 # libGLESv{1,2}_PVR_MESA.so, and powervr_icd.json; mesa-vulkan-drivers gives
 # lavapipe as a software Vulkan fallback for cases where PVR init fails.
+# PVR userspace must match the pvrsrvkm built into the kernel you boot.
+# k3-jun runs 6.18.3-cf-k3-1.0, whose module is bb22; installing the archive's
+# current bb25 against it makes vkCreateInstance fail with -3 and the loader
+# report "no drivers".  Bump this and the kernel together, never separately.
+ARG PVR_VERSION=24.2-6603887bb22
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    img-gpu-powervr \
+    img-gpu-powervr=${PVR_VERSION} \
     libvulkan1 \
     libvirglrenderer1 \
     libglvnd0 \
@@ -82,11 +89,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgles1 \
     libgles2 \
     libegl1 \
-    libgl1-mesa-dri \
-    libegl-mesa0 \
-    libglx-mesa0 \
-    libglapi-mesa \
-    mesa-vulkan-drivers \
     mesa-utils \
     && rm -rf /var/lib/apt/lists/*
 
