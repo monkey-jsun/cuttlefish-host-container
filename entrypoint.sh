@@ -174,12 +174,20 @@ if [[ "$CF_VM_MANAGER" == "crosvm" ]]; then
     fi
     mkdir -p /run/cuttlefish
     SHIM_OPERATOR_SOCKET_FLAG=(--operator-socket /run/cuttlefish/operator)
+    # run_cvd starts operator_proxy, which listens on 8443 and forwards to the
+    # operator on 1443.  Listen there rather than taking 8443 out from under
+    # it: it is a byte proxy, so TLS still terminates here and the browser URL
+    # is unchanged.  Binding 8443 here made operator_proxy fail to bind, abort
+    # on a CHECK, and drop a core file on every launch.
+    SHIM_LISTEN_PORT=1443
     # cf dialect: no sig_server flags; launch_cvd's default
     # --webrtc_sig_server_addr=/run/cuttlefish/operator is correct.
     WEBRTC_UDP_PORT_RANGE_FLAG=(--udp_port_range=15550:15599)
   else
-    # AOSP dialect: tell launch_cvd to not start its own sig server and
-    # point its webrtc binary at our shim's /register_device WS endpoint.
+    # AOSP dialect: no operator_proxy, so the shim serves the browser directly.
+    SHIM_LISTEN_PORT=8443
+    # Tell launch_cvd to not start its own sig server and point its webrtc
+    # binary at our shim's /register_device WS endpoint.
     SIG_SERVER_FLAGS=(
       --webrtc_start_sig_server=false
       --webrtc_sig_server_addr=127.0.0.1
@@ -205,7 +213,7 @@ if [[ "$CF_VM_MANAGER" == "crosvm" ]]; then
   /usr/local/bin/webrtc_operator_shim.py \
     --client-dir "$CF_HOST_DIR/usr/share/webrtc/assets" \
     --cert-dir   "$CF_HOST_DIR/usr/share/webrtc/certs" \
-    --listen-port 8443 \
+    --listen-port "$SHIM_LISTEN_PORT" \
     "${SHIM_OPERATOR_SOCKET_FLAG[@]}" \
     "${SHIM_EXTRA_HOST_IP_FLAGS[@]}" \
     &
