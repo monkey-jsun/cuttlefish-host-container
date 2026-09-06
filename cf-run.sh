@@ -71,7 +71,15 @@ main() {
   # --webrtc_udp_port_range). Forwarding the same range gives docker a
   # static 1:1 NAT mapping, so srflx candidates resolve correctly even
   # behind symmetric upstream NAT.
+  #
+  # --name/--label: a stable name so humans can 'docker stop cf' / 'docker logs
+  # cf', and a label so cf-stop.sh finds the container without knowing the
+  # image name. Clear a leftover stopped 'cf' from a crashed run first (a
+  # running one was already caught by check_already_running).
+  docker rm cf >/dev/null 2>&1 || true
   docker run -it --rm \
+    --name cf \
+    --label cf-host=1 \
     $SECURE_ARGS \
     -p 8443:8443 \
     -p 5900:5900 \
@@ -93,7 +101,9 @@ main() {
 # per the prototype deployment policy.
 check_already_running() {
   local existing
-  existing=$(docker ps -q --filter ancestor="$IMAGE_NAME")
+  # Match by label, not image: one cf instance per host regardless of which
+  # image (generic or a device variant) built the container.
+  existing=$(docker ps -q --filter label=cf-host)
   if [[ -n "$existing" ]]; then
     echo "[cf-run] ERROR: A cf container is already running (container $existing)." >&2
     echo "[cf-run]        Stop it first with ./cf-stop.sh, or: docker kill $existing" >&2

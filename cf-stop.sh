@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-IMAGE_NAME="cf-host"
+# Optional: narrow the search to one image. By default cf-stop finds the cf
+# container by its label, so it works regardless of which image built it.
+IMAGE_NAME=""
 
 usage() {
   cat <<EOF
-Usage: $(basename "$0") [options] [stop_cvd args...]
+Usage: $(basename "$0") [options]
 
-Stop the cuttlefish device running inside the cf-host container.
+Stop the cuttlefish container.  Ctrl-C on a foreground run or 'docker stop cf' does the same thing.
 
 Options:
-  -i, --image NAME      Docker image name to find the container (default: $IMAGE_NAME)
+  -i, --image NAME      Only stop a container from this image (default: any cf container)
   -h, --help            Show this help
-
-All remaining arguments are passed to stop_cvd inside the container.
 EOF
 }
 
@@ -26,38 +26,22 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-CONTAINER_ID=$(docker ps -q --filter ancestor="$IMAGE_NAME")
+FILTER_ARGS=(--filter label=cf-host)
+if [[ -n "$IMAGE_NAME" ]]; then
+  FILTER_ARGS+=(--filter ancestor="$IMAGE_NAME")
+fi
+CONTAINER_ID=$(docker ps -q "${FILTER_ARGS[@]}")
 
 if [[ -z "$CONTAINER_ID" ]]; then
-  echo "[cf-stop] No running container found for image $IMAGE_NAME."
+  echo "[cf-stop] No running cf container found."
   exit 1
 fi
 
-# stop_cvd kills crosvm without shutting Android down, so unflushed guest
-# writes never reach overlay.img. Best-effort; must not block the stop.
-echo "[cf-stop] Flushing guest filesystem ..."
-docker exec "$CONTAINER_ID" env \
-  PATH=/cf/host/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-  timeout 30 sh -c 'adb connect 127.0.0.1:6520 >/dev/null 2>&1; adb shell sync' \
-  >/dev/null 2>&1 || echo "[cf-stop] guest flush skipped (adb unreachable)"
-
-echo "[cf-stop] Stopping CVD in container $CONTAINER_ID ..."
-# Try graceful in-guest shutdown via stop_cvd. May fail (e.g. launcher
-# monitor unresponsive); don't trip set -e here.
-docker exec "$CONTAINER_ID" env \
-  HOME=/cf/host \
-  ANDROID_HOST_OUT=/cf/host \
-  ANDROID_PRODUCT_OUT=/cf/product \
-  CVD_HOME=/cf/instance \
-  PATH=/cf/host/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-  /cf/host/bin/stop_cvd "$@" || \
-    echo "[cf-stop] stop_cvd failed or timed out; will force-stop the container."
-
-# stop_cvd succeeded != container exited. launch_cvd (PID 1) may still be
-# wedged. Ensure the container actually stops.
-sleep 3
-if docker ps -q --filter id="$CONTAINER_ID" | grep -q .; then
-  echo "[cf-stop] Forcing container $CONTAINER_ID to stop..."
-  docker stop -t 5 "$CONTAINER_ID" >/dev/null
-fi
+# The guest flush and graceful stop_cvd live in the container entrypoint, which
+# traps SIGTERM. 'docker stop' sends SIGTERM, so a plain stop flushes the guest
+# exactly like Ctrl-C or 'docker stop cf' -- one code path however it's stopped.
+# -t 40 gives the in-guest sync and stop_cvd time to finish before docker
+# resorts to SIGKILL.
+echo "[cf-stop] Stopping cf container $CONTAINER_ID (flush happens in-container) ..."
+docker stop -t 40 "$CONTAINER_ID" >/dev/null
 echo "[cf-stop] Done."

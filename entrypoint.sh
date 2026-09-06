@@ -235,7 +235,27 @@ echo "  WEBRTC           = 8443"
 echo "  VNC              = 5900 (forwarded from localhost:6444)"
 echo "  ADB TCP          = 6520"
 
-exec launch_cvd \
+# Graceful stop. docker sends SIGTERM to PID 1 (this script -- launch_cvd runs
+# in the background, not via exec); Ctrl-C on a foreground run sends SIGINT.
+# Either way, flush the guest filesystem and stop the VM cleanly before the
+# container goes away. Otherwise crosvm is killed with Android still running and
+# any guest writes not yet fsync'd are lost (they come back zeroed). This is the
+# single stop path: cf-stop.sh and 'docker stop' both land here via SIGTERM.
+cf_shutdown() {
+  trap - TERM INT             # a second signal falls through to the default
+  echo "[cf] Stop requested: flushing guest filesystem ..."
+  timeout 30 sh -c 'adb connect 127.0.0.1:6520 >/dev/null 2>&1; adb shell sync' \
+    >/dev/null 2>&1 || echo "[cf] guest flush skipped (adb unreachable)"
+  echo "[cf] Stopping CVD ..."
+  stop_cvd >/dev/null 2>&1 || true
+  kill "$CVD_PID" 2>/dev/null || true
+  wait "$CVD_PID" 2>/dev/null || true
+  echo "[cf] Stopped."
+  exit 0
+}
+trap cf_shutdown TERM INT
+
+launch_cvd \
   --system_image_dir="$CF_PRODUCT_DIR" \
   --instance_dir="$CF_INSTANCE_DIR" \
   --cpus="$CF_CPUS" \
@@ -246,6 +266,15 @@ exec launch_cvd \
   --report_anonymous_usage_stats=y \
   "${SIG_SERVER_FLAGS[@]}" \
   "${WEBRTC_UDP_PORT_RANGE_FLAG[@]}" \
-  "$@" \
-  || tail -f /dev/null
-  # run forever even on error, for debugging
+  "$@" &
+CVD_PID=$!
+
+# A stop signal interrupts this wait, runs cf_shutdown, and exits. If launch_cvd
+# instead exits on its own (e.g. a launch error), fall through and hold the
+# container open for debugging, as the old 'exec ... || tail -f' did.
+wait "$CVD_PID" || true
+
+echo "[cf] launch_cvd exited on its own; holding container open for debugging."
+echo "[cf] (Ctrl-C or 'docker stop' to exit.)"
+# Sleep so a stop signal can still interrupt the wait and let the trap exit.
+while true; do sleep 3600 & wait $! || true; done
