@@ -5,6 +5,7 @@ IMAGE_NAME="cf-host"
 DEB_PATH=""
 APT_MIRROR=""
 DOCKERFILE=""
+DEVICE=""
 STAGED_DEB=".cuttlefish-base.local.deb"
 
 usage() {
@@ -23,17 +24,17 @@ Options:
                         mirror is slow or blocked in some regions.
                         Example: mirrors.aliyun.com/ubuntu-ports
   -f, --file PATH       Dockerfile to build. Default: Dockerfile
+  -D, --device NAME     Build a device variant from device/NAME/Dockerfile,
+                        taking its image name and defaults from
+                        device/NAME/device.env. Example: spacemit/k3
   -h, --help            Show this help
 
 Examples:
-  # Default build
+  # Default build (generic, swiftshader)
   $(basename "$0")
 
-  # Build the K3/bianbu variant.  Always give it its own image name: it
-  # carries the proprietary Imagination userspace, so it must never become
-  # the image publish.sh pushes, and keeping both lets you A/B against the
-  # generic one.
-  $(basename "$0") -f Dockerfile.bianbu-k3 -i cf-host-k3
+  # Build the K3 PowerVR (GPU-accelerated) variant -> image cf-host-spacemit-k3
+  $(basename "$0") --device spacemit/k3
 
   # Build with a custom image name
   $(basename "$0") -i my-cf-host
@@ -52,6 +53,7 @@ while [[ $# -gt 0 ]]; do
     -d|--deb)       DEB_PATH="$2"; shift 2 ;;
     --apt-mirror)   APT_MIRROR="$2"; shift 2 ;;
     -f|--file)      DOCKERFILE="$2"; shift 2 ;;
+    -D|--device)    DEVICE="$2"; shift 2 ;;
     -h|--help)      usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage; exit 1 ;;
   esac
@@ -60,6 +62,27 @@ done
 # Resolve build context to the script's own directory so cf-build.sh can be
 # invoked from anywhere (e.g. from an instance subdir like cf-k3-v1.1/).
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# --device NAME selects device/NAME/Dockerfile and its device.env defaults.
+# The build context stays $SCRIPT_DIR, so the device Dockerfile can COPY the
+# shared entrypoint.sh/shim from the repo root. -f and -i still override.
+if [[ -n "$DEVICE" ]]; then
+  DEVICE_DIR="device/$DEVICE"
+  if [[ ! -f "$SCRIPT_DIR/$DEVICE_DIR/Dockerfile" ]]; then
+    echo "[cf-build] No such device: $DEVICE (expected $SCRIPT_DIR/$DEVICE_DIR/Dockerfile)" >&2
+    exit 1
+  fi
+  DOCKERFILE="${DOCKERFILE:-$DEVICE_DIR/Dockerfile}"
+  if [[ -f "$SCRIPT_DIR/$DEVICE_DIR/device.env" ]]; then
+    # device.env may set IMAGE (default image name for this device).
+    # shellcheck disable=SC1090
+    source "$SCRIPT_DIR/$DEVICE_DIR/device.env"
+    # -i wins if the user gave one; otherwise use the device's IMAGE.
+    if [[ "$IMAGE_NAME" == "cf-host" && -n "${IMAGE:-}" ]]; then
+      IMAGE_NAME="$IMAGE"
+    fi
+  fi
+fi
 
 DOCKERFILE="${DOCKERFILE:-Dockerfile}"
 if [[ ! -f "$SCRIPT_DIR/$DOCKERFILE" ]]; then
