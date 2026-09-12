@@ -113,7 +113,7 @@ address and cannot discover the host's.
 
 ## TODO
 * The generic image ships no GPU stack; gpu_mode resolves to guest_swiftshader.
-  GPU support is host-specific -- see Dockerfile.bianbu-k3.
+  GPU support is host-specific -- see device/spacemit/k3/ for the K3 PowerVR variant.
 
 ## Networking
 
