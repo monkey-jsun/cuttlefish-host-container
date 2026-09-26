@@ -160,7 +160,7 @@ RUN echo "/usr/lib/cuttlefish-common/bin" > /etc/ld.so.conf.d/cuttlefish-common.
 # ---- GPU launch defaults ----
 # gfxstream-gl reaches the PowerVR GLES driver through EGL's surfaceless
 # platform (no X/GBM display in the container). Default the launch to
-# --gpu_mode=gfxstream so 'cf-run.sh -i cf-host-spacemit-k3' needs no flag;
+# --gpu_mode=gfxstream so 'cf-run.sh -i cf-host-k3' needs no flag;
 # entrypoint.sh reads CF_GPU_MODE.
 ENV EGL_PLATFORM=surfaceless
 ENV CF_GPU_MODE=gfxstream

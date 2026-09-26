@@ -33,7 +33,7 @@ Examples:
   # Default build (generic, swiftshader)
   $(basename "$0")
 
-  # Build the K3 PowerVR (GPU-accelerated) variant -> image cf-host-spacemit-k3
+  # Build the K3 PowerVR (GPU-accelerated) variant -> image cf-host-k3
   $(basename "$0") --device spacemit/k3
 
   # Build with a custom image name
