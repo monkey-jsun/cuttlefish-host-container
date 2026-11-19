@@ -49,11 +49,13 @@ main() {
      SECURE_ARGS="
   --device /dev/net/tun
   --device /dev/vhost-vsock
-  --device /dev/dri
   --cap-add NET_ADMIN
   --cap-add NET_RAW
   --security-opt seccomp=unconfined
   --security-opt no-new-privileges"
+    if [[ -e /dev/dri ]]; then
+      SECURE_ARGS+=" --device /dev/dri"
+    fi
     if [[ -e /dev/kvm ]]; then
       SECURE_ARGS+=" --device /dev/kvm"
     fi
