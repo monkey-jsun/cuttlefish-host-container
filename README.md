@@ -25,10 +25,14 @@ Same-arch host/guest defaults to crosvm (qemu selectable via flag); cross-arch i
   | Host\Guest | x86_64 | arm64 | riscv64 |
   | -------- | ------- | ------- | ------- |
   | x86_64  | crosvm ✓<br>qemu ✓ | qemu ✓ | qemu ✓ |
-  | arm64   | qemu ❓ | crosvm ⚠<br>qemu ❓ | qemu ❓ |
+  | arm64   | qemu ✓ | crosvm ✓<br>qemu ✓ | qemu ✓ |
   | riscv64 | qemu ✗ | qemu ✗ | crosvm ✓<br>qemu ✗ |
 
   Legend: ✓ verified · ⚠ supported but unverified · ❓ unknown · ✗ unsupported
+
+  Note: arm64 guest on qemu with an arm64 host needs a GICv3 host (e.g. RK3399/RK3588).
+  Cuttlefish asks qemu for gic-version=3 (bug), which KVM cannot provide on GICv2 hosts such
+  as the Raspberry Pi 4/5 ("KVM does not support GICv3 emulation").
 
 ## Usage
 4 steps to use the container:
