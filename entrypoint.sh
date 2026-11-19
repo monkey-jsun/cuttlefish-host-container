@@ -145,20 +145,33 @@ SIG_SERVER_FLAGS=()
 SHIM_OPERATOR_SOCKET_FLAG=()
 # Must match the docker -p ...UDP forward in cf-run.sh. Explicit (rather
 # than relying on launch_cvd's default) so the forward stays valid if
-# upstream changes its default. cf/AOSP spell the flag differently.
+# upstream changes its default. Spelling is probed below.
 WEBRTC_UDP_PORT_RANGE_FLAG=()
 if [[ "$CF_VM_MANAGER" == "crosvm" ]]; then
   # AOSP- vs cf-built launch_cvd have diverged on webrtc flags. AOSP keeps
   # the granular --webrtc_sig_server_{path,port,secure} set; cf collapsed
   # them into a single --webrtc_sig_server_addr that points at a unix
   # socket (default /run/cuttlefish/operator). Probe once to pick the
-  # right flag set.
-  if launch_cvd --helpshort 2>/dev/null | grep -q webrtc_sig_server_path; then
+  # right flag set. --helpfull, because AOSP's --helpshort lists no flags.
+  LAUNCH_CVD_HELP=$(launch_cvd --helpfull 2>/dev/null || true)
+  has_flag() { grep -qE -- "^[[:space:]]*-$1 " <<<"$LAUNCH_CVD_HELP"; }
+  if has_flag webrtc_sig_server_path; then
     LAUNCH_CVD_DIALECT=aosp
   else
     LAUNCH_CVD_DIALECT=cf
   fi
   echo "[cf] launch_cvd dialect: $LAUNCH_CVD_DIALECT"
+  # Flag spellings differ between AOSP releases, independent of dialect.
+  if has_flag webrtc_udp_port_range; then
+    WEBRTC_UDP_PORT_RANGE_FLAG=(--webrtc_udp_port_range=15550:15599)
+  else
+    WEBRTC_UDP_PORT_RANGE_FLAG=(--udp_port_range=15550:15599)
+  fi
+  if has_flag webrtc_start_sig_server; then
+    START_SIG_SERVER_FLAG=--webrtc_start_sig_server=false
+  else
+    START_SIG_SERVER_FLAG=--start_webrtc_sig_server=false
+  fi
 
   CF_ICE_SERVERS_DEFAULT='[{"urls":["stun:stun.l.google.com:19302"]}]'
   : "${CF_ICE_SERVERS_JSON:=$CF_ICE_SERVERS_DEFAULT}"
@@ -182,20 +195,18 @@ if [[ "$CF_VM_MANAGER" == "crosvm" ]]; then
     SHIM_LISTEN_PORT=1443
     # cf dialect: no sig_server flags; launch_cvd's default
     # --webrtc_sig_server_addr=/run/cuttlefish/operator is correct.
-    WEBRTC_UDP_PORT_RANGE_FLAG=(--udp_port_range=15550:15599)
   else
     # AOSP dialect: no operator_proxy, so the shim serves the browser directly.
     SHIM_LISTEN_PORT=8443
     # Tell launch_cvd to not start its own sig server and point its webrtc
     # binary at our shim's /register_device WS endpoint.
     SIG_SERVER_FLAGS=(
-      --webrtc_start_sig_server=false
+      "$START_SIG_SERVER_FLAG"
       --webrtc_sig_server_addr=127.0.0.1
       --webrtc_sig_server_port=8443
       --webrtc_sig_server_path=/register_device
       --webrtc_sig_server_secure=true
     )
-    WEBRTC_UDP_PORT_RANGE_FLAG=(--webrtc_udp_port_range=15550:15599)
   fi
 
   # CF_EXTRA_HOST_IPS (comma-separated) -> repeated --extra-host-ip flags.
