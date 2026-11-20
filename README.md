@@ -25,14 +25,17 @@ Same-arch host/guest defaults to crosvm (qemu selectable via flag); cross-arch i
   | Host\Guest | x86_64 | arm64 | riscv64 |
   | -------- | ------- | ------- | ------- |
   | x86_64  | crosvm ✓<br>qemu ✓ | qemu ✓ | qemu ✓ |
-  | arm64   | qemu ✓ | crosvm ✓<br>qemu ✓ | qemu ✓ |
+  | arm64   | qemu ⚠ | crosvm ✓<br>qemu ✓ | qemu ⚠ |
   | riscv64 | qemu ✗ | qemu ✗ | crosvm ✓<br>qemu ✗ |
 
-  Legend: ✓ verified · ⚠ supported but unverified · ❓ unknown · ✗ unsupported
+  Legend: ✓ verified · ⚠ works, but unstable · ❓ unknown · ✗ unsupported
 
-  Note: arm64 guest on qemu with an arm64 host needs a GICv3 host (e.g. RK3399/RK3588).
-  Cuttlefish asks qemu for gic-version=3 (bug), which KVM cannot provide on GICv2 hosts such
-  as the Raspberry Pi 4/5 ("KVM does not support GICv3 emulation").
+  Notes:
+  1. arm64 guest on qemu with an arm64 host needs a GICv3 host (e.g. RK3399/RK3588).
+     Cuttlefish asks qemu for gic-version=3 (bug), which KVM cannot provide on GICv2 hosts such
+     as the Raspberry Pi 4/5 ("KVM does not support GICv3 emulation").
+  2. x86_64/riscv64 guests on an arm64 host boot on a Raspberry Pi 4 but crash randomly
+     on AWS Graviton2/3 (guest memory corruption; cause unknown).
 
 ## Usage
 4 steps to use the container:
